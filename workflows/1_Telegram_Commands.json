@@ -1,0 +1,1749 @@
+{
+  "id": "gFlP9s5ar06UAKme",
+  "versionId": "ea6e2ce6-4a58-4dec-8323-618608ae3a38",
+  "name": "MR · Telegram Commands",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "a361146b-204e-451c-951c-bfeec52314fc",
+      "name": "On Telegram Message",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        1296
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read what the person typed and check it BEFORE anything touches the database.\n// Anything malformed goes to a usage message instead of falling through.\nconst OWNER_CHAT_ID = 'YOUR_TELEGRAM_CHAT_ID';\nconst msg = $input.first().json.message || {};\nconst chat_id = String((msg.chat && msg.chat.id) || '');\nif (!chat_id) return [];\nconst text = String(msg.text || '').trim();\nconst first_name = (msg.from && msg.from.first_name) || '';\nlet command = '';\nlet args = [];\nif (text.startsWith('/')) {\n  const parts = text.split(/\\s+/);\n  command = parts[0].slice(1).split('@')[0].toLowerCase();\n  args = parts.slice(1).join(' ').split(/[\\s,;]+/).filter(Boolean);\n}\nconst aliases = { start: 'start', help: 'start', watch: 'watch', follow: 'watch', add: 'watch',\n  unwatch: 'unwatch', unfollow: 'unwatch', remove: 'unwatch', list: 'list', report: 'report',\n  stop: 'stop', status: 'status', simulate: 'simulate' };\nlet route = aliases[command] || 'unknown';\nconst is_owner = chat_id === OWNER_CHAT_ID;\nif (route === 'simulate' && !is_owner) route = 'unknown';\n\n// /watch also takes company names: commas separate names (\"tesla, turkish airlines\"),\n// otherwise spaces do (\"TSLA MSFT\"). Each term keeps the text as typed; at most 30 per message.\nconst MAX_TERMS = 30;\nlet terms = [];\nlet terms_dropped = 0;\nif (route === 'watch') {\n  const rest = text.replace(/^\\S+/, '').trim();\n  const pieces = /[,;]/.test(rest) ? rest.split(/[,;]/) : rest.split(/\\s+/);\n  const seenTerms = new Set();\n  for (const piece of pieces) {\n    const term = piece.replace(/\\s+/g, ' ').trim().replace(/^\\$/, '').slice(0, 60);\n    if (!term || seenTerms.has(term.toLowerCase())) continue;\n    seenTerms.add(term.toLowerCase());\n    terms.push(term);\n  }\n  terms_dropped = Math.max(0, terms.length - MAX_TERMS);\n  terms = terms.slice(0, MAX_TERMS);\n}\n\nconst SYMBOL = /^[A-Z0-9^][A-Z0-9.=^-]{0,11}$/;\nconst upper = args.map(a => a.toUpperCase().replace(/^\\$/, ''));\nconst symbols = Array.from(new Set(upper.filter(s => SYMBOL.test(s))));\nconst malformed = upper.filter(s => !SYMBOL.test(s));\nlet usage_text = '';\nif (route === 'watch' && !terms.length) {\n  usage_text = 'Usage: /watch tesla, airbus, turkish airlines\\nor with Yahoo Finance tickers: /watch AAPL MSFT MC.PA\\nSeparate company names with commas.';\n  route = 'usage';\n}\nif (route === 'unwatch' && !symbols.length) {\n  usage_text = (malformed.length ? 'That does not look like a stock symbol: ' + malformed.join(', ') + '\\n' : '') +\n    'Usage: /' + route + ' AAPL MSFT\\nUse Yahoo Finance symbols, e.g. AAPL, NVDA, MC.PA (Paris).';\n  route = 'usage';\n}\nlet sim_source = '';\nlet sim_down = false;\nif (route === 'simulate') {\n  const SOURCES = ['yahoo', 'alphavantage', 'fx', 'news', 'ai', 'reset'];\n  sim_source = (args[0] || '').toLowerCase();\n  const state = (args[1] || '').toLowerCase();\n  if (!SOURCES.includes(sim_source) || (sim_source !== 'reset' && !['down', 'up'].includes(state))) {\n    usage_text = 'Usage: /simulate <yahoo|alphavantage|fx|news|ai> <down|up>\\nor /simulate reset';\n    route = 'usage';\n  }\n  sim_down = state === 'down';\n}\nreturn [{ json: { route, chat_id, first_name, text, symbols, malformed, terms, terms_dropped, usage_text, sim_source, sim_down, is_owner } }];\n"
+      },
+      "id": "07f42559-972f-4ba1-8e2b-1dd8e82d2be7",
+      "name": "Parse And Validate Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "start"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "watch"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "unwatch"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "list"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "report"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "stop"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "status"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "simulate"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "usage"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "unknown"
+        }
+      },
+      "id": "f4ed728d-1063-4711-bdb9-a7ece853dab0",
+      "name": "Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Parse And Validate Command').first().json;\nconst esc = t => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst text = '👋 Hi ' + esc(p.first_name || 'there') + '! I am your <b>Market Report</b> bot.\\n\\n' +\n  'Every weekday at 8:00 (Paris time) I send you the US indices, <b>your</b> stocks, the dollar/euro rate and the headlines that matter, with a short AI summary that is fact-checked before you see it.\\n\\n' +\n  '<b>Commands</b>\\n' +\n  '/watch AAPL MSFT : follow stocks (up to 30)\\n' +\n  '/unwatch AAPL : stop following a stock\\n' +\n  '/list : see the stocks you follow\\n' +\n  '/report : get your report right now\\n' +\n  '/status : health of the data sources\\n' +\n  '/stop : unsubscribe and delete your data\\n' +\n  '/help : this message\\n\\n' +\n  'Symbols are Yahoo Finance tickers: AAPL, NVDA, MC.PA (Paris), ^GSPC.\\n' +\n  '<i>Information only, not financial advice.</i>';\nreturn [{ json: { chat_id: p.chat_id, text } }];"
+      },
+      "id": "469578a5-9165-4b81-9d07-cfe22cb84ec3",
+      "name": "Write Welcome Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "db1cd889-9fe7-457a-b691-eaa647f2918f",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2912,
+        1296
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Before looking anything up: skip terms that are already a symbol on the list,\n// and look nothing up at all if the person is already at the 30-stocks cap.\nconst p = $('Parse And Validate Command').first().json;\nconst CAP = 30;\nconst existing = $input.all().map(i => i.json).filter(r => r.symbol).map(r => String(r.symbol).toUpperCase());\nconst already = p.terms.filter(t => existing.includes(t.toUpperCase())).map(t => t.toUpperCase());\nconst toResolve = p.terms.filter(t => !existing.includes(t.toUpperCase()));\nconst room = Math.max(0, CAP - existing.length);\nconst overCap = room ? [] : toResolve;\nconst meta = { already, overCap, existing, existing_count: existing.length, cap: CAP, terms_dropped: p.terms_dropped || 0 };\nif (!toResolve.length || !room) return [{ json: { none: true, meta } }];\nreturn [{ json: { none: false, terms: toResolve, chat_id: p.chat_id, meta } }];\n"
+      },
+      "id": "537eb063-16ab-4348-819d-fee229635b5a",
+      "name": "Plan New Stocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.none }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1311958c-7ed7-4605-9636-793f1f9eb37c",
+      "name": "Anything To Check?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only what the lookup actually found, skip stocks already followed (or named twice in one message),\n// and stop at the 30-stocks cap. Every term gets an outcome that the reply reports back.\nconst plan = $('Plan New Stocks').first().json;\nconst meta = plan.meta;\nconst resolved = $input.all().map(i => i.json).filter(r => r && r.term);\nconst answered = new Set(resolved.map(r => String(r.term).toLowerCase()));\nconst followed = new Set(meta.existing);\nlet room = meta.cap - meta.existing_count;\nconst result = { added: [], already: meta.already.map(t => ({ term: t })), overCap: [], notFound: [], unavailable: [],\n  existing_count: meta.existing_count, cap: meta.cap, terms_dropped: meta.terms_dropped };\n// If the lookup itself failed, the person is told to retry rather than told the stock does not exist.\nfor (const t of plan.terms) if (!answered.has(t.toLowerCase())) result.unavailable.push({ term: t });\nfor (const r of resolved) {\n  if (r.status === 'lookup_unavailable') { result.unavailable.push({ term: r.term }); continue; }\n  if (r.status !== 'found' || !r.symbol) { result.notFound.push({ term: r.term }); continue; }\n  const symbol = String(r.symbol).toUpperCase();\n  const entry = { term: r.term, symbol, name: r.name || '', method: r.method };\n  if (followed.has(symbol)) {\n    if (!result.added.some(a => a.symbol === symbol)) result.already.push(entry);\n    continue;\n  }\n  if (room <= 0) { result.overCap.push(entry); continue; }\n  followed.add(symbol);\n  room--;\n  result.added.push(entry);\n}\nif (!result.added.length) return [{ json: { none: true, result } }];\nreturn result.added.map(a => ({ json: { none: false, chat_id: plan.chat_id, symbol: a.symbol, name: a.name, result } }));\n"
+      },
+      "id": "2a1fd0b0-59d8-4786-8bb2-08da099cf4be",
+      "name": "Pick Stocks To Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.none }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "78a195cf-77ec-40fa-a263-0e9e6a6ec863",
+      "name": "Anything To Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tell the person what each thing they typed was understood as, so a wrong match is easy to spot.\nconst p = $('Parse And Validate Command').first().json;\nconst meta = $('Plan New Stocks').first().json.meta;\nlet r = null;\ntry { r = $('Pick Stocks To Save').first().json.result; } catch (e) { r = null; }\nif (!r) r = { added: [], already: meta.already.map(t => ({ term: t })), overCap: meta.overCap.map(t => ({ term: t })),\n  notFound: [], unavailable: [], existing_count: meta.existing_count, cap: meta.cap, terms_dropped: meta.terms_dropped };\nconst esc = t => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst label = e => (e.symbol && e.symbol.toUpperCase() !== String(e.term).toUpperCase())\n  ? esc(e.term) + ' → <b>' + esc(e.symbol) + '</b>' : '<b>' + esc(e.symbol || e.term) + '</b>';\nconst lines = [];\nfor (const a of r.added) {\n  lines.push('✅ ' + label(a) + (a.name ? ' (' + esc(a.name) + ')' : '') + (a.method === 'ai' ? ' <i>(matched by AI, double-check)</i>' : ''));\n}\nif (r.already.length) lines.push('ℹ️ Already on your list: ' + r.already.map(label).join(', '));\nif (r.notFound.length) lines.push('❌ Not found on Yahoo Finance: ' + esc(r.notFound.map(e => e.term).join(', ')) + '. Check the spelling, or use the ticker (e.g. MC.PA for LVMH).');\nif (r.unavailable.length) lines.push(\"🕓 Couldn't look this up right now, try again later or use the ticker: \" + esc(r.unavailable.map(e => e.term).join(', ')));\nif (r.overCap.length) lines.push('⛔ Limit of ' + r.cap + ' stocks reached. Not added: ' + r.overCap.map(label).join(', ') + '. Use /unwatch to make room.');\nif (r.terms_dropped) lines.push('ℹ️ Only the first 30 names in a message are looked at; ' + r.terms_dropped + ' more were ignored.');\nconst total = r.existing_count + r.added.length;\nlines.push('You follow ' + total + '/' + r.cap + ' stocks. /list to see them, /report for a report now.');\nreturn [{ json: { chat_id: p.chat_id, text: lines.join('\\n') } }];\n"
+      },
+      "id": "f44b4ab7-0c7e-4d80-a620-53524c2324cd",
+      "name": "Write Watch Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        336
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Parse And Validate Command').first().json;\nconst existing = $input.all().map(i => i.json).filter(r => r.symbol).map(r => String(r.symbol).toUpperCase());\nconst remove = p.symbols.filter(s => existing.includes(s));\nconst notFound = p.symbols.filter(s => !existing.includes(s));\nconst meta = { remove, notFound, remaining: existing.length - remove.length };\nif (!remove.length) return [{ json: { none: true, meta } }];\nreturn remove.map(s => ({ json: { none: false, chat_id: p.chat_id, symbol: s, meta } }));"
+      },
+      "id": "bec41ffe-2097-4ab9-a8dc-cd415ee22c11",
+      "name": "Plan Removals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.none }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cd9cf87a-d53a-4f1e-94ec-1026d955c9df",
+      "name": "Anything To Remove?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Parse And Validate Command').first().json;\nconst meta = $('Plan Removals').first().json.meta;\nconst lines = [];\nif (meta.remove.length) lines.push('🗑 No longer following: ' + meta.remove.join(', '));\nif (meta.notFound.length) lines.push('ℹ️ Not on your list: ' + meta.notFound.join(', '));\nlines.push('You now follow ' + meta.remaining + ' stocks. /list to see them.');\nreturn [{ json: { chat_id: p.chat_id, text: lines.join('\\n') } }];"
+      },
+      "id": "8a746f89-ead2-4121-b3f8-524ff0295d29",
+      "name": "Write Unwatch Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        672
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Parse And Validate Command').first().json;\nconst esc = t => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = $input.all().map(i => i.json).filter(r => r.symbol).sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));\nlet text;\nif (!rows.length) text = 'You do not follow any stocks yet. Try /watch AAPL MSFT';\nelse text = '⭐ <b>Your stocks</b> (' + rows.length + '/30)\\n' + rows.map(r => '• <b>' + esc(r.symbol) + '</b>' + (r.name ? ' ' + esc(r.name) : '')).join('\\n');\nreturn [{ json: { chat_id: p.chat_id, text } }];"
+      },
+      "id": "1361c662-67a1-41bf-90ec-998ff20bb49c",
+      "name": "Write List Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Each on-demand report costs one AI call and some data-source quota, so we cap it per person per day.\nconst p = $('Parse And Validate Command').first().json;\nconst LIMIT = 5;\nconst used = $input.all().map(i => i.json).filter(r => r.chat_id).length;\nreturn [{ json: { chat_id: p.chat_id, used, limit: LIMIT, allowed: used < LIMIT } }];"
+      },
+      "id": "c2c91973-d238-4884-b742-96d8042a2e87",
+      "name": "Check Daily Report Limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.allowed }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fbd40c9d-b1ae-443d-9b3d-4005b520c7ef",
+      "name": "Under Daily Limit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "QXlV3T5yphTPj0Bm"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mode": "on_demand",
+            "chat_id": "={{ $json.chat_id }}"
+          },
+          "schema": [
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "1c49fc17-e58d-4b5a-b3fb-fa06a2b572b8",
+      "name": "Start Report In Background",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        2464,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "chat_id",
+              "value": "={{ $('Check Daily Report Limit').first().json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "p2",
+              "name": "text",
+              "value": "⏳ Preparing your report, it will arrive in a few seconds…",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c40828c6-4a31-41b7-ac77-4da4209a9fa4",
+      "name": "Write Preparing Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        1104
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "l1",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "l2",
+              "name": "text",
+              "value": "=You already asked for {{ $json.used }} reports today (limit {{ $json.limit }}). Your next one arrives tomorrow at 8:00.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d7853f8c-d270-466f-b070-e4da855f0543",
+      "name": "Write Limit Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "g1",
+              "name": "chat_id",
+              "value": "={{ $('Parse And Validate Command').first().json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "g2",
+              "name": "text",
+              "value": "👋 Unsubscribed. Your stocks, your subscription and your report history have been deleted. Send /start any time to come back.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3dba90b5-f906-4199-9374-ae524214d371",
+      "name": "Write Goodbye Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        1488
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Parse And Validate Command').first().json;\nconst esc = t => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst labels = { yahoo: 'Stock prices (Yahoo, primary)', alphavantage: 'Stock prices (Alpha Vantage, backup)', fx: 'Exchange rates', news: 'Headlines', ai: 'AI summary' };\nconst health = $('Read Source Health').all().map(i => i.json).filter(h => h.source);\nconst lines = ['🩺 <b>System status</b>'];\nfor (const key of Object.keys(labels)) {\n  const h = health.find(x => x.source === key) || {};\n  let state = '✅ working';\n  if (h.simulate_down) state = '🧪 switched off for a demo';\n  else if ((h.consecutive_failures || 0) >= 3) state = '🔌 skipped after ' + h.consecutive_failures + ' failures in a row (retried after 30 min)';\n  else if ((h.consecutive_failures || 0) > 0) state = '⚠️ failed ' + h.consecutive_failures + ' time(s) in a row';\n  else if (h.last_status === 'partial') state = '✅ working (some symbols missing)';\n  lines.push(labels[key] + ': ' + state);\n}\nconst last = $input.all().map(i => i.json).filter(r => r.report_date);\nif (last.length) {\n  const r = last[0];\n  lines.push('');\n  lines.push('Last report: ' + esc(r.report_date) + ' (' + esc(r.trigger) + '), ' + esc(r.status) + '. Sections with problems: ' + esc(r.sections_down || 'none') + '. Summary by: ' + esc(r.summary_by) + '.');\n}\nreturn [{ json: { chat_id: p.chat_id, text: lines.join('\\n') } }];"
+      },
+      "id": "768c24b7-fb11-4c5a-9f3b-6cb16c3a9ac2",
+      "name": "Write Status Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Owner-only demo switch: makes a data source fail on purpose, to show the system recovering live.\nconst p = $input.first().json;\nconst all = ['yahoo', 'alphavantage', 'fx', 'news', 'ai'];\nconst targets = p.sim_source === 'reset' ? all : [p.sim_source];\nconst down = p.sim_source === 'reset' ? false : p.sim_down;\nreturn targets.map(s => ({ json: { source: s, simulate_down: down, consecutive_failures: 0, last_status: 'ok' } }));"
+      },
+      "id": "79aec351-29e5-4305-b014-33d177325bf8",
+      "name": "Plan Simulation Switch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        1872
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "chat_id",
+              "value": "={{ $('Parse And Validate Command').first().json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "text",
+              "value": "={{ (() => { const p = $('Parse And Validate Command').first().json; return p.sim_source === 'reset' ? '🧪 All sources back to normal.' : '🧪 ' + p.sim_source + ' is now ' + (p.sim_down ? 'DOWN (simulated)' : 'back UP') + '. Send /report to see how the system reacts.'; })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ac91b69c-8bfa-466b-846d-9de0f00c4cd5",
+      "name": "Write Simulation Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        1872
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u1",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "u2",
+              "name": "text",
+              "value": "={{ $json.usage_text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "96190a47-9d76-4f69-9fdb-12f478bd9bf4",
+      "name": "Write Usage Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        2064
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "k1",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "k2",
+              "name": "text",
+              "value": "🤔 I did not understand that. I only answer commands, for example /watch AAPL or /report. Send /help for the full list.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d89fa8ea-c639-49fc-a27d-e72b0d65b7af",
+      "name": "Write Unknown Command Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        2256
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Telegram Commands\nEvery message is parsed and validated first; bad input gets a usage message and never reaches the database.\n/watch takes company names or tickers. The Resolve Stock Symbols sub-workflow checks Yahoo first and asks AI only as a last resort (AI answers are re-checked on Yahoo). Yahoo down = nothing saved, the person is told to retry.\n/report answers instantly and builds the report in the background (async). /stop deletes all data stored about that person.",
+        "color": 6
+      },
+      "id": "50f1fc08-f6a1-417d-9b4e-bcec35dfd2db",
+      "name": "Sticky Note 27a873c2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1392,
+        2256
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "4lsOih8YDH30OPGh"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "terms": "={{ $json.terms }}"
+          },
+          "schema": [
+            {
+              "id": "terms",
+              "displayName": "terms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "array",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "4332052c-82f0-4484-9f6b-010f9f35b9e8",
+      "name": "Resolve Stock Symbols",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1680,
+        272
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_subscribers (chat_id, first_name, active) values ($1, $2, true) on conflict (chat_id) do update set first_name = excluded.first_name, active = true returning chat_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.first_name || '' ] }}"
+        }
+      },
+      "id": "3b80df04-3068-4210-9032-3e8a8e53fd96",
+      "name": "Subscribe User (Start)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_subscribers (chat_id, first_name, active) values ($1, $2, true) on conflict (chat_id) do update set first_name = excluded.first_name, active = true returning chat_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.first_name || '' ] }}"
+        }
+      },
+      "id": "06f46823-94c4-4e9a-8095-743a60151aab",
+      "name": "Subscribe User (Watch)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_subscribers (chat_id, first_name, active) values ($1, $2, true) on conflict (chat_id) do update set first_name = excluded.first_name, active = true returning chat_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.first_name || '' ] }}"
+        }
+      },
+      "id": "28ae7508-18d1-45df-8f19-526ef0474c5f",
+      "name": "Subscribe User (Report)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1568,
+        1200
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, symbol, name from mr_watchlist where chat_id = $1 order by symbol",
+        "options": {
+          "queryReplacement": "={{ [ $('Parse And Validate Command').first().json.chat_id ] }}"
+        }
+      },
+      "id": "90954a8f-c4b1-4e9e-8b9a-ba00f75ba805",
+      "name": "Read My Stocks (Watch)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_watchlist (chat_id, symbol, name) values ($1, $2, $3) on conflict (chat_id, symbol) do nothing",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.symbol, $json.name || '' ] }}"
+        }
+      },
+      "id": "339dd790-f2b6-4c18-a3dd-28d5d21685ac",
+      "name": "Save New Stocks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        192
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, symbol, name from mr_watchlist where chat_id = $1 order by symbol",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id ] }}"
+        }
+      },
+      "id": "31de9e3e-04ff-4874-99cc-743740b3e69a",
+      "name": "Read My Stocks (Unwatch)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1792,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "delete from mr_watchlist where chat_id = $1 and symbol = $2",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.symbol ] }}"
+        }
+      },
+      "id": "b8922d8d-5141-40d6-8926-4472c22eebc9",
+      "name": "Remove Stock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        608
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, symbol, name from mr_watchlist where chat_id = $1 order by symbol",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id ] }}"
+        }
+      },
+      "id": "76d1b33b-a5b9-421d-9175-c3e0dbf6c5b1",
+      "name": "Read My Stocks (List)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        912
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, report_date, trigger, status from mr_report_log where chat_id = $1 and report_date = $2 and trigger = 'on_demand'",
+        "options": {
+          "queryReplacement": "={{ [ $('Parse And Validate Command').first().json.chat_id, $now.setZone('Europe/Paris').toFormat('yyyy-MM-dd') ] }}"
+        }
+      },
+      "id": "b75c9bff-bb06-4c57-b013-04c1a1a0fb68",
+      "name": "Read My Reports Today",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1792,
+        1200
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "delete from mr_watchlist where chat_id = $1",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id ] }}"
+        }
+      },
+      "id": "dc376929-ef79-4815-953d-9571d30795c9",
+      "name": "Delete My Stocks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2016,
+        1488
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "delete from mr_subscribers where chat_id = $1",
+        "options": {
+          "queryReplacement": "={{ [ $('Parse And Validate Command').first().json.chat_id ] }}"
+        }
+      },
+      "id": "d4998a29-25da-4387-8621-5cbb3a4927bd",
+      "name": "Delete My Subscription",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2240,
+        1488
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "delete from mr_report_log where chat_id = $1",
+        "options": {
+          "queryReplacement": "={{ [ $('Parse And Validate Command').first().json.chat_id ] }}"
+        }
+      },
+      "id": "8c9324fe-c4f4-4766-8c28-2aa00a47d20f",
+      "name": "Delete My Report History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        1488
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select source, consecutive_failures, last_status, last_checked, simulate_down from mr_source_health order by source",
+        "options": {}
+      },
+      "id": "1e8c652b-d7d3-4596-a7e7-4f6a5ad2c8ba",
+      "name": "Read Source Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2240,
+        1680
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, report_date, trigger, status, sections_down, summary_by, sent_at from mr_report_log order by id desc limit 5",
+        "options": {}
+      },
+      "id": "1933da7e-6f82-4657-989c-f2b8528b2e6c",
+      "name": "Read Latest Deliveries",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        1680
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_source_health (source, simulate_down, consecutive_failures, last_status) values ($1, $2::boolean, $3::int, $4) on conflict (source) do update set simulate_down = excluded.simulate_down, consecutive_failures = excluded.consecutive_failures, last_status = excluded.last_status",
+        "options": {
+          "queryReplacement": "={{ [ $json.source, $json.simulate_down, $json.consecutive_failures, $json.last_status ] }}"
+        }
+      },
+      "id": "3b3ce8d6-fc2e-4617-9114-800718d8f7b6",
+      "name": "Save Simulation Switch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        1872
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    }
+  ],
+  "connections": {
+    "On Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Parse And Validate Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse And Validate Command": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Subscribe User (Start)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Subscribe User (Watch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read My Stocks (Unwatch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read My Stocks (List)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Subscribe User (Report)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete My Stocks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan Simulation Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Usage Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Unknown Command Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Welcome Message": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan New Stocks": {
+      "main": [
+        [
+          {
+            "node": "Anything To Check?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything To Check?": {
+      "main": [
+        [
+          {
+            "node": "Resolve Stock Symbols",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Watch Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Stocks To Save": {
+      "main": [
+        [
+          {
+            "node": "Anything To Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything To Save?": {
+      "main": [
+        [
+          {
+            "node": "Save New Stocks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Watch Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Watch Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Removals": {
+      "main": [
+        [
+          {
+            "node": "Anything To Remove?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything To Remove?": {
+      "main": [
+        [
+          {
+            "node": "Remove Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Unwatch Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Unwatch Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write List Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Daily Report Limit": {
+      "main": [
+        [
+          {
+            "node": "Under Daily Limit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Daily Limit?": {
+      "main": [
+        [
+          {
+            "node": "Start Report In Background",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Limit Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Report In Background": {
+      "main": [
+        [
+          {
+            "node": "Write Preparing Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Preparing Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Limit Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Goodbye Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Status Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Simulation Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Usage Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Unknown Command Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Stock Symbols": {
+      "main": [
+        [
+          {
+            "node": "Pick Stocks To Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscribe User (Start)": {
+      "main": [
+        [
+          {
+            "node": "Write Welcome Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscribe User (Watch)": {
+      "main": [
+        [
+          {
+            "node": "Read My Stocks (Watch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read My Stocks (Watch)": {
+      "main": [
+        [
+          {
+            "node": "Plan New Stocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save New Stocks": {
+      "main": [
+        [
+          {
+            "node": "Write Watch Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read My Stocks (Unwatch)": {
+      "main": [
+        [
+          {
+            "node": "Plan Removals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Stock": {
+      "main": [
+        [
+          {
+            "node": "Write Unwatch Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read My Stocks (List)": {
+      "main": [
+        [
+          {
+            "node": "Write List Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscribe User (Report)": {
+      "main": [
+        [
+          {
+            "node": "Read My Reports Today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read My Reports Today": {
+      "main": [
+        [
+          {
+            "node": "Check Daily Report Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete My Stocks": {
+      "main": [
+        [
+          {
+            "node": "Delete My Subscription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete My Subscription": {
+      "main": [
+        [
+          {
+            "node": "Delete My Report History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete My Report History": {
+      "main": [
+        [
+          {
+            "node": "Write Goodbye Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Source Health": {
+      "main": [
+        [
+          {
+            "node": "Read Latest Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Latest Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Write Status Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Simulation Switch": {
+      "main": [
+        [
+          {
+            "node": "Save Simulation Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Simulation Switch": {
+      "main": [
+        [
+          {
+            "node": "Write Simulation Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "errorWorkflow": "vQABQntRyQok558s",
+    "timezone": "Europe/Paris",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
