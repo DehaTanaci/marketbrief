@@ -1,0 +1,15 @@
+# Real secrets live only in .env (copy .env.example and fill it in)
+.env
+.env.*
+!.env.example
+
+# Docker volume data if ever bind-mounted locally
+n8n_data/
+postgres_data/
+.n8n/
+
+# Local credential exports must never be committed
+*credentials*.json
+
+# macOS
+.DS_Store
