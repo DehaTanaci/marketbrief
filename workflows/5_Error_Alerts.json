@@ -1,0 +1,142 @@
+{
+  "id": "vQABQntRyQok558s",
+  "versionId": "721987b5-2564-49a9-b73f-d56dd93c24e2",
+  "name": "MR · Error Alerts",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a0e48234-449e-43d3-90d9-c4a742b4b62a",
+      "name": "When A Workflow Fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn n8n's error report into one short message for the owner, plus a row for the error log.\nconst OWNER_CHAT_ID = 'YOUR_TELEGRAM_CHAT_ID';\nconst e = $input.first().json;\nconst ex = e.execution || {};\nconst wf = e.workflow || {};\nconst err = ex.error || e.trigger && e.trigger.error || {};\nconst message = String(err.message || err.description || 'Unknown error').slice(0, 300);\nconst nodeName = ex.lastNodeExecuted || (err.node && err.node.name) || 'unknown step';\nconst esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst text = '🚨 <b>Market Report: something broke</b>\\n' +\n  'Workflow: ' + esc(wf.name || 'unknown') + '\\n' +\n  'Step: ' + esc(nodeName) + '\\n' +\n  'Error: ' + esc(message) + '\\n' +\n  (ex.url ? 'Details: ' + esc(ex.url) : '');\nreturn [{ json: {\n  owner_chat_id: OWNER_CHAT_ID,\n  text: text,\n  workflow: wf.name || 'unknown',\n  node: nodeName,\n  message: message,\n  created_at: new Date().toISOString()\n} }];"
+      },
+      "id": "0092cc2d-fb3b-4427-a4eb-393553d29ed7",
+      "name": "Format Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.owner_chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "ed6a38e6-4e95-4493-a5c6-4a1f86db9305",
+      "name": "Notify Owner On Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Error alerts\nRuns automatically when the report or command workflows fail after their retries.\nSends the owner a Telegram alert and writes a row to mr_error_log.\nNote: n8n only fires this for real (production) runs, not manual test runs.",
+        "color": 3
+      },
+      "id": "d50b8ec0-bc6b-41ef-9e4d-741d21e14370",
+      "name": "Sticky Note 8f692376",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        272,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_error_log (workflow, node, message, created_at) values ($1, $2, $3, $4)",
+        "options": {
+          "queryReplacement": "={{ [ $('Format Alert').first().json.workflow, $('Format Alert').first().json.node, $('Format Alert').first().json.message, $('Format Alert').first().json.created_at ] }}"
+        }
+      },
+      "id": "5debc144-9a69-464a-8589-6a0a3dd0d297",
+      "name": "Write Error Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When A Workflow Fails": {
+      "main": [
+        [
+          {
+            "node": "Format Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert": {
+      "main": [
+        [
+          {
+            "node": "Notify Owner On Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Owner On Telegram": {
+      "main": [
+        [
+          {
+            "node": "Write Error Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}
