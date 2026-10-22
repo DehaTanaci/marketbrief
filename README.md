@@ -137,7 +137,7 @@ The workflows, credentials and data are still there after the restart, because t
 | Send | Expected |
 |---|---|
 | `/simulate yahoo down`, then `/report` | Prices come from Alpha Vantage and the report shows a ⚠ "backup" note |
-| `/simulate on alphavantage, news, ai`, then `/report` | The report is still delivered with what's left, plus one note per missing section; the summary falls back to the template |
+| `/simulate alphavantage down`, `/simulate news down`, `/simulate ai down` (one per message), then `/report` | The report is still delivered with what's left, plus one note per missing section; the summary falls back to the template |
 | `/simulate fx down`, then `/report` | The backup currency rate is used |
 | `/simulate reset` | Everything back to normal |
 | Click **Run Now (Test)** twice | The second run sends nothing (never twice). The database also refuses a second scheduled log row for the same day |
