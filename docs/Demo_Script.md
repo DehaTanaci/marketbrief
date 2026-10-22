@@ -1,4 +1,4 @@
-# MarketBrief: Presentation Script (22 October 2026, 13:00)
+# MarketBrief: Presentation Script (22 October 2026, 19:45)
 
 The teacher's format: **1–2 min** specs + diagram, **3–4 min** live demo, then **1–2 questions**. Total 5–7 minutes, no time for debugging.
 Lines in *italics* are things to say. **Bold** is what to type or click.
@@ -19,6 +19,8 @@ Lines in *italics* are things to say. **Bold** is what to type or click.
 
 **Five minutes before your slot, have these open:**
 - The PDF proposal, on page 1.
+- GitHub: **github.com/DehaTanaci/marketbrief** (the README page). Only shown if asked.
+- n8n: the **Executions** page (left menu). Everything is green except one red row from 21 Oct, 17:37. See the questions section.
 - Telegram on the laptop (web.telegram.org), scrolled to the 8:00 report. Keep your phone as a backup.
 - n8n: the **MR · Build & Send Reports** canvas.
 - Supabase (supabase.com, your project): **Table Editor → mr_report_log**.
@@ -94,7 +96,7 @@ What appears:
 
 ### 3:30 · Close (15 s)
 
-*"Every required building block is used, every failure case was tested live, and the limits are in the proposal: Yahoo is unofficial, which is why there's a backup, and the fact-check verifies numbers but not yet whether the AI said 'rose' or 'fell'. Thank you."*
+*"Everything is on GitHub: a Docker setup that starts n8n with its own PostgreSQL database in one command, the five workflows exported in exactly the version you just saw, tagged v1.0, and a README to set it up from scratch. Every failure case was tested live. The limits are in the proposal: Yahoo is unofficial, which is why there's a backup, and the fact-check verifies numbers but not yet whether the AI said 'rose' or 'fell'. Thank you."*
 
 **If you're running long:** cut "Behind the scenes" down to the report log only. Never cut "Break it live": it's the Level 3 proof.
 
@@ -156,3 +158,28 @@ Check that the AI's "rose/fell" matches the numbers, add a weekly recap from the
 | /simulate yahoo down | Owner only: break a source (yahoo, alphavantage, fx, news, ai) |
 | /simulate reset | Everything back to normal |
 | /stop | Unsubscribe and delete your data |
+
+---
+
+## Likely questions: short answers
+
+**"How is this different from Lab 1?"**
+*"Lab 1 answers when you ask and forgets. This comes to you on a schedule, remembers each person's stocks and every report it sent, and keeps delivering when a source fails. It has no /price or /news Q&A at all."*
+
+**"How do you know the AI didn't make something up?"**
+*"Two checks. First, a Structured Output Parser forces the AI to answer in a fixed format. Second, code compares every number the AI wrote with the real data and rejects any advice words. If either check fails, the summary is replaced by a template written by code. So the user never sees an unchecked AI sentence."*
+
+**"What stops a duplicate report?"**
+*"Before sending, it reads today's delivery log and skips anyone already served. And the database itself refuses a second scheduled log row for the same person on the same day, so even a bug in the workflow can't record it twice."*
+
+**"You demoed on n8n Cloud. Where's the self-hosting?"**
+*"The live bot runs on Cloud so it's always on at 8:00 without my laptop. The repo has the Docker Compose setup: n8n plus PostgreSQL, pinned versions, named volumes, and a health check on the database. I tested it from a fresh clone. It starts, imports all five workflows, and keeps them after a full restart. A Telegram bot can only talk to one server at a time, so the self-hosted copy is imported switched off; to run it live you'd point a tunnel at it."*
+
+**"Why are all your commits from today?"**
+*"I built and tested everything inside n8n first, using its version history, and only set up the Git repository today. I didn't want to fake older dates. n8n's own version history shows the earlier steps."* (True: every change since 21 Oct is in each workflow's version history in n8n.)
+
+**"There's a red execution."**
+*"That's the very first test run, yesterday at 17:37, before my Telegram chat was connected. The report had nowhere to go, so the 'Fail Loudly' step marked the run as failed on purpose, instead of letting it look green. That's the safety net working."*
+
+**"What happens if Yahoo shuts down for good?"**
+*"After three failures in a row the circuit breaker stops calling it and goes straight to Alpha Vantage. Reports keep arriving with a note saying prices come from the backup. The backup's free plan is only 25 lookups a day, so for many users I'd move to a paid data source. That's the next step in the proposal."*
