@@ -1,0 +1,676 @@
+{
+  "id": "4lsOih8YDH30OPGh",
+  "versionId": "f7b93aad-8ce3-466c-81bd-b42a202bdc53",
+  "name": "MR · Resolve Stock Symbols",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "terms",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "32e8281c-28cc-4943-82e9-cd0b8ff6652c",
+      "name": "When Asked To Resolve Terms",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the caller's list into one item per term, and note which ones already look like a ticker.\n// Only text typed in capitals counts as a ticker (TSLA, MC.PA): \"ford\" means Ford Motor, not the FORD ticker.\nconst TICKER = /^[A-Z0-9^][A-Z0-9.=^-]{0,11}$/;\nlet raw = $input.first().json.terms;\nif (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (e) { raw = raw.split(','); } }\nif (!Array.isArray(raw)) raw = [];\nconst seen = new Set();\nconst out = [];\nfor (const t of raw) {\n  const term = String(t === null || t === undefined ? '' : t).replace(/\\s+/g, ' ').trim().slice(0, 60);\n  const key = term.toLowerCase();\n  if (!term || seen.has(key)) continue;\n  seen.add(key);\n  const candidate = term.replace(/^\\$/, '');\n  out.push({ json: { idx: out.length, term: term, candidate: candidate, ticker_shaped: TICKER.test(candidate) } });\n  if (out.length >= 30) break;\n}\nreturn out;\n"
+      },
+      "id": "c4ec8879-bb2d-4ec8-8868-2f091bb8ed92",
+      "name": "Prepare Terms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every term has now been tried against Yahoo. Put them back in the order the person typed them,\n// and list the ones Yahoo could not place: only those go to the AI, all together in one call.\nconst results = $input.all().map(i => i.json).filter(r => r && r.term).sort((a, b) => a.idx - b.idx);\nconst unresolved = results.filter(r => r.status === 'needs_ai').map(r => r.term);\nreturn [{ json: { results: results, unresolved: unresolved, ai_needed: unresolved.length > 0 } }];\n"
+      },
+      "id": "6499e99b-27e1-4bf0-b98c-6e2b34fa34cf",
+      "name": "Gather Lookup Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ai_needed }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "730bc06f-e9ab-4a28-b33b-59860901b3eb",
+      "name": "Anything For AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=NAMES:\n{{ JSON.stringify($json.unresolved) }}",
+        "hasOutputParser": true,
+        "batching": {},
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "For each name you are given, return the stock ticker it most likely trades under ON YAHOO FINANCE, including the exchange suffix Yahoo uses (for example .PA Paris, .L London, .DE Germany, .IS Istanbul, .T Tokyo, .HK Hong Kong). Prefer the company's main home listing.\nIf a name is not a real listed company or fund, or you are not sure, return an empty string as its symbol. Never invent a ticker.\nReturn every name exactly as written, in the same order."
+            }
+          ]
+        }
+      },
+      "id": "b6f90aee-46db-4bdf-ac16-c3320bdf823d",
+      "name": "Ask AI For Tickers",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1120,
+        -96
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low",
+          "timeout": 45000,
+          "maxRetries": 1
+        }
+      },
+      "id": "6ae0c585-3a93-422e-8838-896121e56a6b",
+      "name": "Ticker Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1104,
+        208
+      ],
+      "credentials": {
+        "openAiApi": {
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{ \"suggestions\": [ { \"term\": \"turkish airlines\", \"symbol\": \"THYAO.IS\" } ] }"
+      },
+      "id": "98aca889-6002-4df2-9a37-82dc2851b3e5",
+      "name": "Ticker Format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1248,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The AI only suggests. Each suggestion must look like a ticker, and is then checked on Yahoo before it counts.\nconst TICKER = /^[A-Z0-9^][A-Z0-9.=^-]{0,11}$/;\nconst asked = $('Gather Lookup Results').first().json.unresolved;\nconst inp = $input.first().json || {};\nlet out = inp.output;\nif (typeof out === 'string') { try { out = JSON.parse(out); } catch (e) { out = null; } }\nconst list = out && Array.isArray(out.suggestions) ? out.suggestions : [];\nconst checks = [];\nasked.forEach((term, i) => {\n  let s = list.find(x => x && String(x.term || '').trim().toLowerCase() === term.toLowerCase());\n  if (!s && list.length === asked.length) s = list[i];\n  const symbol = s ? String(s.symbol || '').trim().toUpperCase() : '';\n  if (symbol && TICKER.test(symbol)) checks.push({ json: { none: false, term: term, symbol: symbol } });\n});\nif (!checks.length) return [{ json: { none: true } }];\nreturn checks;\n"
+      },
+      "id": "07270270-295c-471c-b665-7dd3c99f5a11",
+      "name": "Plan AI Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.none }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f29b6236-71d6-4eee-ab4a-8821dc8bad03",
+      "name": "Any AI Suggestions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://query1.finance.yahoo.com/v8/finance/chart/{{ encodeURIComponent($json.symbol) }}?range=1d&interval=1d",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (MarketReportBot)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 6000
+        }
+      },
+      "id": "4dcd6d28-25b1-4ab0-a4bf-e32b6b54bd5c",
+      "name": "Verify AI Ticker On Yahoo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        -192
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final answer, one item per term in the order typed: what it resolved to, how, and whether that worked.\n// An AI suggestion only becomes \"found\" if Yahoo confirmed the ticker exists and has a price.\nconst base = $('Gather Lookup Results').first().json.results;\nlet checks = [];\nlet verified = [];\ntry {\n  verified = $('Verify AI Ticker On Yahoo').all().map(i => i.json);\n  checks = $('Plan AI Checks').all().map(i => i.json);\n} catch (e) { verified = []; checks = []; }\nconst byTerm = {};\nchecks.forEach((c, i) => { if (!c.none) byTerm[c.term] = { symbol: c.symbol, res: verified[i] || {} }; });\nreturn base.map(r => {\n  const out = { term: r.term, symbol: r.symbol || '', name: r.name || '', method: r.method, status: r.status };\n  if (r.status !== 'needs_ai') return { json: out };\n  out.method = 'ai';\n  out.status = 'not_found';\n  const c = byTerm[r.term];\n  if (!c) return { json: out };\n  let body = c.res.body;\n  if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\n  const chart = body && body.chart;\n  const meta = chart && chart.result && chart.result[0] && chart.result[0].meta;\n  if (c.res.statusCode === 200 && meta && typeof meta.regularMarketPrice === 'number') {\n    out.status = 'found';\n    out.symbol = String(meta.symbol || c.symbol).toUpperCase();\n    out.name = meta.shortName || meta.longName || '';\n  } else if (!(c.res.statusCode === 404 || c.res.statusCode === 200 || (chart && chart.error))) {\n    out.status = 'lookup_unavailable';\n  }\n  return { json: out };\n});\n"
+      },
+      "id": "236fc0c6-f0b5-4166-9d09-c9b0afe93c5b",
+      "name": "Assemble Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ticker_shaped }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c1f9261a-3af8-4b09-b445-d683ec5d7d3a",
+      "name": "Looks Like A Ticker?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://query1.finance.yahoo.com/v8/finance/chart/{{ encodeURIComponent($json.candidate) }}?range=1d&interval=1d",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (MarketReportBot)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 6000
+        }
+      },
+      "id": "f9394f5a-f5b2-4a30-afa1-6213f65a6e6e",
+      "name": "Check Ticker On Yahoo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        304
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 200 with a price = the ticker exists. 404 = no such ticker, so try it as a name instead.\n// Anything else (timeout, 5xx, rate limit) is Yahoo's trouble, not the user's: the name search gets a go too.\nconst t = $('Looks Like A Ticker?').item.json;\nconst r = $json || {};\nlet body = r.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\nconst chart = body && body.chart;\nconst meta = chart && chart.result && chart.result[0] && chart.result[0].meta;\nif (r.statusCode === 200 && meta && typeof meta.regularMarketPrice === 'number') {\n  return { json: { idx: t.idx, term: t.term, status: 'found', method: 'exact',\n    symbol: String(meta.symbol || t.candidate).toUpperCase(), name: meta.shortName || meta.longName || '' } };\n}\nconst exact = (r.statusCode === 404 || r.statusCode === 200 || (chart && chart.error)) ? 'missing' : 'unavailable';\nreturn { json: Object.assign({}, t, { status: 'pending', exact: exact }) };\n"
+      },
+      "id": "881a322c-8985-4f38-a80c-dade2d13b939",
+      "name": "Read Ticker Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "found"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1496b256-34b7-47dc-bcaa-d6366b7e09ad",
+      "name": "Found Exactly?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "7e9e21e6-8b8e-4a3a-804b-e7c1eaf3dfdb",
+      "name": "Loop Over Terms",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://query1.finance.yahoo.com/v1/finance/search?q={{ encodeURIComponent($json.candidate) }}&quotesCount=5&newsCount=0",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (MarketReportBot)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 6000
+        }
+      },
+      "id": "cf56182e-5c5c-4b96-a25c-eeec7956e273",
+      "name": "Search Yahoo By Name",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        496
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Yahoo's own search turns a name into a ticker. Futures and options are skipped (an \"airbus\" future is not a stock);\n// shares come first, then funds, then indices. An empty search is left for the AI step.\nconst t = $('Looks Like A Ticker?').item.json;\nconst r = $json || {};\nlet body = r.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\nconst base = { idx: t.idx, term: t.term, method: 'search', symbol: '', name: '' };\nif (r.statusCode !== 200 || !body || typeof body !== 'object') {\n  return { json: Object.assign(base, { status: 'lookup_unavailable' }) };\n}\nconst RANK = { EQUITY: 0, ETF: 1, INDEX: 2 };\nconst quotes = (Array.isArray(body.quotes) ? body.quotes : [])\n  .filter(q => q && q.symbol && q.quoteType !== 'FUTURE' && q.quoteType !== 'OPTION');\nconst rank = q => (q.quoteType in RANK ? RANK[q.quoteType] : 3);\nconst best = quotes.slice().sort((a, b) => rank(a) - rank(b))[0];\nif (!best) return { json: Object.assign(base, { status: 'needs_ai' }) };\nreturn { json: Object.assign(base, { status: 'found', symbol: String(best.symbol).toUpperCase(),\n  name: best.shortname || best.longname || '' }) };\n"
+      },
+      "id": "373c2b8e-5fdf-4f71-b9bb-ae6985c8f001",
+      "name": "Pick Best Search Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Resolve Stock Symbols\nTurns what a person typed into a Yahoo Finance ticker, cheapest and most reliable step first:\n1. Typed in capitals (TSLA, MC.PA)? Check the ticker exists on Yahoo.\n2. Otherwise search Yahoo by name (futures skipped; shares, then funds, then indices).\n3. Only if Yahoo finds nothing: ONE AI call for all leftovers, and every AI answer is re-checked on Yahoo before it counts.\nYahoo down = \"lookup unavailable\", never a guess.",
+        "height": 260,
+        "width": 560,
+        "color": 6
+      },
+      "id": "951cee32-e133-4ff5-af58-3a53c4f9ebcc",
+      "name": "Sticky Note e83b6d4e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ]
+    }
+  ],
+  "connections": {
+    "When Asked To Resolve Terms": {
+      "main": [
+        [
+          {
+            "node": "Prepare Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Terms": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gather Lookup Results": {
+      "main": [
+        [
+          {
+            "node": "Anything For AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything For AI?": {
+      "main": [
+        [
+          {
+            "node": "Ask AI For Tickers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Assemble Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask AI For Tickers": {
+      "main": [
+        [
+          {
+            "node": "Plan AI Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticker Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Ask AI For Tickers",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticker Format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Ask AI For Tickers",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan AI Checks": {
+      "main": [
+        [
+          {
+            "node": "Any AI Suggestions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any AI Suggestions?": {
+      "main": [
+        [
+          {
+            "node": "Verify AI Ticker On Yahoo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Assemble Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify AI Ticker On Yahoo": {
+      "main": [
+        [
+          {
+            "node": "Assemble Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Looks Like A Ticker?": {
+      "main": [
+        [
+          {
+            "node": "Check Ticker On Yahoo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Yahoo By Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Ticker On Yahoo": {
+      "main": [
+        [
+          {
+            "node": "Read Ticker Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Ticker Check": {
+      "main": [
+        [
+          {
+            "node": "Found Exactly?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found Exactly?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Terms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Yahoo By Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Terms": {
+      "main": [
+        [
+          {
+            "node": "Gather Lookup Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Looks Like A Ticker?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Yahoo By Name": {
+      "main": [
+        [
+          {
+            "node": "Pick Best Search Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Best Search Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Terms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "errorWorkflow": "vQABQntRyQok558s",
+    "timezone": "Europe/Paris",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
