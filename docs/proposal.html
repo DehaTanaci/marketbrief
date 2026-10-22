@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MarketBrief Architecture Proposal: Deha Tanaci</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm 20mm 20mm; }
+  :root { --ink: #1a1a1a; --muted: #555; --rule: #bbb; --accent: #1f4e79; --soft: #f3f6fa; }
+  html { background: #fff; }
+  body { font-family: "Charter", "Georgia", serif; color: var(--ink); font-size: 10.6pt; line-height: 1.42; margin: 0; }
+  h1 { font-size: 19pt; margin: 0 0 2pt; text-align: center; font-weight: 700; }
+  .subtitle { text-align: center; font-size: 12.5pt; margin: 0 0 8pt; }
+  .meta { text-align: center; font-size: 9.8pt; color: var(--muted); margin-bottom: 4pt; }
+  .date { text-align: center; font-size: 10pt; margin-bottom: 14pt; }
+  h2 { font-size: 13pt; margin: 16pt 0 6pt; color: var(--ink); }
+  h2 .n { margin-right: 10pt; }
+  h3 { font-size: 11pt; margin: 10pt 0 4pt; }
+  p { margin: 0 0 6pt; text-align: justify; hyphens: auto; }
+  ol, ul { margin: 2pt 0 6pt; padding-left: 20pt; }
+  li { margin-bottom: 2.5pt; }
+  b, strong { font-weight: 700; }
+  code, .mono { font-family: "Menlo", "Courier New", monospace; font-size: 9pt; background: #f2f2f2; padding: 0 2pt; border-radius: 2px; }
+  table { border-collapse: collapse; width: 100%; margin: 4pt 0 10pt; font-size: 9.4pt; }
+  th, td { border-top: 0.6pt solid var(--rule); border-bottom: 0.6pt solid var(--rule); padding: 3.5pt 5pt; vertical-align: top; text-align: left; }
+  th { background: var(--soft); font-weight: 700; }
+  tr { break-inside: avoid; }
+  .box { border: 0.8pt solid var(--accent); background: var(--soft); padding: 6pt 9pt; margin: 6pt 0 10pt; border-radius: 3px; }
+  .box p:last-child { margin-bottom: 0; }
+  .pass { color: #1b6e2d; font-weight: 700; }
+  .small { font-size: 9pt; color: var(--muted); }
+  .figure { break-inside: avoid; margin-top: 8pt; }
+  .caption { font-size: 9.4pt; margin-top: 6pt; text-align: justify; }
+  .pagebreak { break-before: page; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10pt; }
+</style>
+</head>
+<body>
+
+<h1>MarketBrief Architecture Proposal: Deha Tanaci</h1>
+<div class="subtitle">Personal Morning Market Report on Telegram using n8n</div>
+<div class="meta"><b>Stack:</b> n8n (Cloud for the live bot; Docker Compose self-hosting with PostgreSQL in the repo), Telegram, Yahoo Finance, Alpha Vantage, Frankfurter, ExchangeRate-API, CNBC / BBC / Google News RSS, Supabase (managed PostgreSQL), OpenAI model via n8n AI credits &nbsp;·&nbsp; <b>Target:</b> Level 3 (project 20 of the list)</div>
+<div class="date">22 October 2026</div>
+
+<h2><span class="n">1</span>The Need</h2>
+<p>People who follow a handful of stocks open three or four apps every morning: a broker app for their own stocks, a currency converter, and a news site, and they still have to work out what matters for <i>their</i> positions. Built-in alerts watch one stock at a time and never give the full picture in one read. <b>MarketBrief</b> is a Telegram bot where a user types <code>/watch tesla, airbus, turkish airlines</code> once, and then every weekday at 8:00 (Paris time) receives one message: the three US indices, their own stocks sorted by how much they moved, the dollar/euro rate, the four most relevant financial and political headlines, and a two-to-three sentence summary written by AI and <b>fact-checked by code</b> before it is sent.</p>
+<p>The bot only reports and never advises (“information only, not financial advice”), so a wrong or late report costs nobody money, which keeps the project inside the course’s “boring failure” rule.</p>
+<div class="box">
+<p><b>Relation to Lab 1.</b> Lab 1 built a bot that <i>answers questions</i> about stocks: the user asks, the AI looks things up, the bot replies and forgets. MarketBrief is the system around that data: it <b>comes to the user</b> on a schedule, <b>remembers</b> each person’s list and every report it sent, serves <b>many users</b> from one data fetch, and <b>keeps delivering when a source fails</b>. It deliberately has no <code>/price</code> or <code>/news</code> question-answering, and the AI is one small, checked step, not the engine.</p>
+</div>
+
+<h2><span class="n">2</span>The Triggers</h2>
+<p>The system has three entry points, and every one of them can be fired on demand:</p>
+<ul>
+  <li><b>Telegram Trigger</b> fires on every message to the bot: <code>/start</code>, <code>/watch</code>, <code>/unwatch</code>, <code>/list</code>, <code>/report</code>, <code>/status</code>, <code>/stop</code>, and the owner-only <code>/simulate</code>. For repeatable tests, n8n’s test mode replays a saved Telegram message without anyone typing it.</li>
+  <li><b>Schedule Trigger</b> runs the morning report every weekday at 08:00, with the workflow time zone set to Europe/Paris (the course warns that time zones cause more scheduling bugs than anything else).</li>
+  <li><b>Manual Trigger</b> (“Run Now (Test)”) is wired to the same path as the schedule, and <code>/report</code> runs the same pipeline for one person, so nobody waits for 8:00 during building or the demo.</li>
+</ul>
+
+<h2><span class="n">3</span>Architecture &amp; Data Flow</h2>
+<p>The project is three workflows plus two sub-workflows, sharing one Supabase PostgreSQL database with six tables. The diagram at the end shows how they connect.</p>
+
+<h3>Workflow A: Telegram Commands (Telegram Trigger)</h3>
+<ol>
+  <li><b>Telegram Trigger</b> → the message text, chat ID and first name.</li>
+  <li><b>Parse And Validate Command</b> (Code) → recognises the command, splits company names on commas and tickers on spaces, rejects malformed input, and marks the owner. A stray “hello” or an empty <code>/watch</code> goes to a usage message and never reaches the database.</li>
+  <li><b>Route Command</b> (Switch) → one branch per command, plus a fallback for anything unknown.</li>
+  <li><b>/watch</b> → reads the user’s list, skips what is already followed, enforces the <b>30-stocks-per-person cap</b>, calls sub-workflow <b>D</b> to turn names into tickers, saves the found ones, and replies with what each term was understood as (“tesla → TSLA (Tesla, Inc.)”).</li>
+  <li><b>/report</b> → checks the daily limit (5 on-demand reports per person, because each one costs an AI call and data-source quota), replies “Preparing your report…” <b>immediately</b>, and starts workflow <b>B</b> in the background without waiting for it (asynchronous).</li>
+  <li><b>/stop</b> → deletes the person’s stocks, subscription and report history. <b>/status</b> → shows the health of each data source and the last report. <b>/simulate</b> → owner-only switch that makes a chosen source fail on purpose, for the live demo.</li>
+  <li><b>Send Reply</b> (Telegram) → one shared reply node at the end of every branch.</li>
+</ol>
+
+<h3>Workflow B: Build &amp; Send Reports (Schedule, Manual, or called by /report)</h3>
+<ol start="8">
+  <li><b>Read</b> source health, active subscribers, all watchlists and today’s report log (PostgreSQL, retried if the database is slow).</li>
+  <li><b>Pick Recipients</b> (Code) → for scheduled runs, skips anyone who already received today’s scheduled report, so running the job twice <b>never sends twice</b>. Builds one combined list of symbols, so ten users following Tesla cost one price request, not ten.</li>
+  <li><b>Get Market Quotes</b> (sub-workflow <b>C</b>) → every price in one call.</li>
+  <li><b>Fetch FX Rates</b> (Frankfurter, with day-over-day change) and <b>Fetch FX Backup Rate</b> (ExchangeRate-API, rate only).</li>
+  <li><b>Read CNBC, BBC Business and political headlines</b> (three RSS feeds), each allowed to fail on its own.</li>
+  <li><b>Assemble Market Data</b> (Code) → each section (stocks, currencies, headlines) is marked ok, partial, backup or down <b>independently</b>; headlines are de-duplicated, limited to the last 36 hours and to four per source.</li>
+  <li><b>Write Market Summary</b> (Basic LLM Chain + Structured Output Parser) → <b>one AI call per run for everyone</b>, never one per user. The AI receives numbers already computed by code and returns a short summary plus the IDs of the four most relevant headlines.</li>
+  <li><b>Fact-Check AI Summary</b> (Code) → every number in the AI text must match a real figure from our data, advice words (buy, sell, should, recommend) are forbidden, and the length is capped. If anything fails, or the AI times out, a plain summary written by code is used instead.</li>
+  <li><b>Compose Reports</b> (Code) → one personal message per recipient, with a “live prices” or “prices as of US close” line and a ⚠ note for every section that used a backup or is unavailable.</li>
+  <li><b>Send Report</b> (Telegram) → <b>Save Delivery Log</b> and <b>Save Price History</b> (PostgreSQL).</li>
+  <li><b>Check Delivery</b> → if reports were due but none was delivered, <b>Fail Loudly</b> (Stop And Error) so the error workflow alerts the owner, because a run that did nothing must not look green.</li>
+</ol>
+
+<h3>Sub-workflow C: Get Market Quotes</h3>
+<ol start="19">
+  <li><b>Plan Quote Requests</b> → decides whether the primary source may be used. If Yahoo failed in <b>three runs in a row</b>, it is skipped for 30 minutes and the backup is used directly (a circuit breaker).</li>
+  <li><b>Fetch Yahoo Quote</b> → Retry On Fail (2 tries), then <b>Fetch Alpha Vantage Quote</b> for anything still missing (indices through the SPY, QQQ and DIA funds). Alpha Vantage answers “200 OK” even when its daily quota is used up, so success is judged on the content, not the status code.</li>
+  <li><b>Compute Source Health</b> → <b>Update Source Health</b> (PostgreSQL): counts failures in a row per source; any success resets the count.</li>
+</ol>
+
+<h3>Sub-workflow D: Resolve Stock Symbols</h3>
+<ol start="22">
+  <li>For each term: if it looks like a ticker, check it on Yahoo; otherwise use Yahoo’s free company search. <b>Only if the search finds nothing</b> (e.g. “turkish airlines”) is the AI asked, once for all unresolved names, and <b>every AI answer is re-checked on Yahoo</b> before it can be saved. This follows the course rule: never use AI for what a lookup can do, and never trust its output unchecked.</li>
+  <li>A 404 from Yahoo means the user typed something that does not exist (rejected); a timeout or 5xx means Yahoo is the problem (the user is told to retry, nothing wrong is saved).</li>
+</ol>
+
+<h3>Workflow E: Error Alerts (Error Trigger)</h3>
+<ol start="24">
+  <li><b>Error Trigger</b> → fires when A, B or C fails after its retries (set as the error workflow of each).</li>
+  <li><b>Notify Owner On Telegram</b> (workflow, failing step, error text, link to the execution) and <b>Write Error Log</b> (PostgreSQL).</li>
+</ol>
+
+<h2><span class="n">4</span>Level Aim &amp; Cut Line</h2>
+<p>Targeting <b>Level 3</b>, because the design is judged on what happens when a dependency times out, returns an error, or the same job fires twice. The build followed the course advice: a working Level 2 version first, then each Level 3 layer on top, so an unfinished attempt would still have demoed as a working system.</p>
+<div class="two">
+<div>
+<h3>Build order</h3>
+<ol>
+  <li>Level 2 core: <code>/start</code>, <code>/watch</code>, database, scheduled report to Telegram.</li>
+  <li>Each section fails on its own; delivery log.</li>
+  <li>Never-send-twice check; error workflow; fail loudly.</li>
+  <li>Backup sources for prices and currencies; retries.</li>
+  <li>AI summary with code fact-check and template fallback.</li>
+  <li>Circuit breaker, <code>/simulate</code>, <code>/status</code>.</li>
+  <li>Company names in <code>/watch</code> (sub-workflow D).</li>
+</ol>
+</div>
+<div>
+<h3>Cut line: what goes first if time runs short</h3>
+<ol>
+  <li>Company-name lookup (users type tickers instead).</li>
+  <li>Circuit breaker (retries and backup remain).</li>
+  <li><code>/status</code> and price history.</li>
+  <li>Shrink the AI to a fixed one-call summary with no headline picking. The AI node stays, since it is a required node type.</li>
+</ol>
+<p class="small">Never cut: input validation, database, scheduled delivery, never-send-twice, error workflow. <b>Status: everything above was built and tested; nothing was cut.</b></p>
+</div>
+</div>
+
+<h2><span class="n">5</span>Minimum Technical Requirements Mapping</h2>
+<table>
+  <tr><th style="width:24%">Requirement</th><th>Where it is used</th></tr>
+  <tr><td>If or Set node</td><td>If: “Anyone To Send To?”, “AI Available?”, “Nothing Delivered?”, “Under Daily Limit?”, “Needs Backup?”. Set: run settings, replies (“Preparing your report…”).</td></tr>
+  <tr><td>Code node</td><td>Command parsing and validation, recipient picking, section assembly, AI fact-check, report composition, source-health computation.</td></tr>
+  <tr><td>Router or If/Switch</td><td>Switch “Route Command” with eight commands plus an “unknown” fallback.</td></tr>
+  <tr><td>API connection</td><td>HTTP Request to Yahoo Finance (prices, search), Alpha Vantage (backup, key stored as a credential), Frankfurter and ExchangeRate-API (currencies); RSS Read for three news feeds.</td></tr>
+  <tr><td>Message trigger</td><td>Telegram Trigger (not Chat Message).</td></tr>
+  <tr><td>Database for persistence</td><td>Supabase, a managed PostgreSQL database, reached with n8n’s Postgres node: six tables with keys and rules the database enforces itself, see section 6.</td></tr>
+  <tr><td>AI node</td><td>Basic LLM Chain with an OpenAI chat model and a Structured Output Parser (summary); a second chain in sub-workflow D for unknown company names.</td></tr>
+  <tr><td>Sub-workflow</td><td>“Get Market Quotes” and “Resolve Stock Symbols”, called with Execute Sub-workflow; workflow B is also started as a background sub-workflow by <code>/report</code>.</td></tr>
+  <tr><td>Error handling and retries</td><td>Retry On Fail on every network call; error outputs to backups and templates; circuit breaker; Stop And Error; a separate Error Workflow that alerts the owner.</td></tr>
+</table>
+
+<h2><span class="n">6</span>Data Model (State, in Supabase PostgreSQL)</h2>
+<table>
+  <tr><th style="width:22%">Table</th><th style="width:40%">Columns</th><th>Purpose</th></tr>
+  <tr><td>mr_subscribers</td><td>chat_id, first_name, active, joined_at</td><td>Who receives the morning report.</td></tr>
+  <tr><td>mr_watchlist</td><td>chat_id, symbol, name</td><td>Each person’s stocks (max 30). Saved name is reused when the backup source has none.</td></tr>
+  <tr><td>mr_report_log</td><td>chat_id, report_date, trigger, status, sections_down, summary_by, sent_at</td><td>Never-send-twice check, daily <code>/report</code> limit, <code>/status</code>, and evidence for the demo.</td></tr>
+  <tr><td>mr_market_history</td><td>report_date, symbol, price, change_pct, source</td><td>One row per symbol per day (upserted, so reruns do not duplicate).</td></tr>
+  <tr><td>mr_source_health</td><td>source, consecutive_failures, last_status, last_checked, simulate_down</td><td>Circuit breaker, <code>/status</code>, and the <code>/simulate</code> demo switch.</td></tr>
+  <tr><td>mr_error_log</td><td>workflow, node, message, created_at</td><td>Written by the error workflow.</td></tr>
+</table>
+<p><b>Rules the database enforces.</b> A person cannot follow the same stock twice (unique chat_id + symbol). Each person can have only one scheduled report logged per day, so even a buggy rerun cannot record a second one. Deleting a person deletes their stocks automatically (foreign key with cascade). Row-level security is switched on for every table, so the tables cannot be read through Supabase’s public web API: only n8n’s own database login reaches them.</p>
+<p><b>Which copy counts.</b> The tables are the single source of truth for who follows what; Yahoo and the other services are only read, never trusted to remember anything. <b>Deletion.</b> <code>/stop</code> removes every row about that person in the three tables that hold personal data.</p>
+
+<h2><span class="n">7</span>Key Design Decisions</h2>
+<table>
+  <tr><th style="width:30%">Decision</th><th>Why</th></tr>
+  <tr><td>Each report section succeeds or fails on its own</td><td>A dead price source should cost the user one section, not the whole morning report.</td></tr>
+  <tr><td><code>/report</code> answers first, works after</td><td>The user should not stare at a silent chat for 15 seconds; the slow part (fetching, AI) runs in the background and delivers when ready.</td></tr>
+  <tr><td>One AI call per run, numbers computed by code</td><td>Cost stays flat as users grow, and the AI is used only for judgement on text (summarising, picking headlines), never for arithmetic.</td></tr>
+  <tr><td>Lookup first, AI last, AI checked</td><td>Yahoo search is free, instant and deterministic; the AI only handles the names search cannot, and cannot save a ticker that does not exist.</td></tr>
+  <tr><td>Retry temporary failures, not user mistakes</td><td>Timeouts and 5xx are retried and then routed to a backup; a 404 on a ticker is the user’s typo and is rejected immediately.</td></tr>
+  <tr><td>A real database that enforces its own rules</td><td>The important rules (no duplicate stocks, one scheduled report per person per day, a deleted person leaves no stocks behind) live in PostgreSQL itself, so a mistake in a workflow cannot break them. The data also survives if the n8n account is lost.</td></tr>
+  <tr><td>Quota-aware backup</td><td>Alpha Vantage allows 25 requests a day, so it is only called for symbols the primary could not serve, one every 2 seconds, because its free plan also refuses requests sent too close together.</td></tr>
+</table>
+
+<h2><span class="n">8</span>Failure Scenarios &amp; Test Plan</h2>
+<p>Each scenario can be forced on demand (most with <code>/simulate</code>), so every one can be shown live. All were run on 21 October 2026 against the live system. After the move from n8n’s built-in tables to Supabase PostgreSQL the same evening, the data was copied over and the delivery, never-send-twice, error-alert, bad-input, <code>/simulate</code>, backup-source and company-name tests were all run again on the live bot.</p>
+<table>
+  <tr><th style="width:21%">Scenario</th><th style="width:27%">How it is triggered</th><th style="width:38%">Expected behaviour</th><th>Result</th></tr>
+  <tr><td>Bad input</td><td><code>hello</code>, <code>/watch</code> alone, <code>/watch qwertyzzz, TSLA</code></td><td>Usage or “not understood” message; unknown name reported as not found; nothing wrong written.</td><td class="pass">Passed</td></tr>
+  <tr><td>Stranger tries the demo switch</td><td><code>/simulate yahoo down</code> from another account</td><td>Treated as an unknown command; nothing changes.</td><td class="pass">Passed</td></tr>
+  <tr><td>Primary price source down</td><td><code>/simulate yahoo down</code>, then <code>/report</code></td><td>2 retries, then Alpha Vantage; report delivered with a ⚠ “prices came from the backup” note.</td><td class="pass">Passed</td></tr>
+  <tr><td>Both price sources, news and AI down</td><td><code>/simulate</code> on alphavantage, news, ai; then <code>/report</code></td><td>Report still delivered with what is left (currencies, template summary) and a note per missing section.</td><td class="pass">Passed</td></tr>
+  <tr><td>Currency source down</td><td><code>/simulate fx down</code>, then <code>/report</code></td><td>Backup rate used; note that the daily change is unavailable.</td><td class="pass">Passed</td></tr>
+  <tr><td>AI unavailable or wrong</td><td><code>/simulate ai down</code>; AI writing a number not in the data</td><td>Summary replaced by a plain template written by code.</td><td class="pass">Passed</td></tr>
+  <tr><td>Job runs twice</td><td>“Run Now” twice in a row</td><td>First run sends; second finds today’s report already sent and sends nothing. The database also refuses a second scheduled log row for the same day.</td><td class="pass">Passed</td></tr>
+  <tr><td>Real failure in production</td><td>A live run that fails on purpose (Stop And Error)</td><td>Error workflow sends the owner a Telegram alert and logs it.</td><td class="pass">Passed</td></tr>
+  <tr><td>Name not a ticker</td><td><code>/watch tesla, airbus, turkish airlines</code></td><td>TSLA and AIR.PA via Yahoo search; THYAO.IS via AI, re-checked on Yahoo and flagged “matched by AI”.</td><td class="pass">Passed</td></tr>
+</table>
+<p class="small">Testing also caught and fixed five real bugs before the demo: the fact-check read the “500” in “S&amp;P 500” as an invented number; it rejected normal rounding (1.1% for 1.05%); company names disappeared when the backup source was used; one news site crowded out the others; and the backup price source refused requests sent less than about a second apart, so its calls are now spaced two seconds apart.</p>
+
+<h2><span class="n">9</span>Known Limitations</h2>
+<ul>
+  <li><b>Yahoo Finance is unofficial.</b> It can change without notice; that is exactly why a backup source, a circuit breaker and per-section failure exist.</li>
+  <li><b>The fact-check verifies numbers, not direction.</b> If the AI wrote “fell 1.5%” for a 1.5% rise, the check would pass. A next step would compare the verb with the sign.</li>
+  <li><b>The database is one more service that can fail.</b> Reads are retried; if Supabase stays unreachable, a scheduled run fails loudly and the owner is alerted, because without the database the system cannot know who to send to. Price fetching keeps working without it.</li>
+  <li><b>Free database plan.</b> It has no automatic backups and pauses after a week without activity (the daily report prevents that). A paid plan adds daily backups.</li>
+  <li><b>One environment.</b> Building and the live bot share one instance; the course recommends a separate test instance before real users.</li>
+</ul>
+
+<div class="pagebreak"></div>
+<h2><span class="n">10</span>System Architecture &amp; Workflow Graph</h2>
+<div class="figure">
+<svg viewBox="0 0 760 540" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+    <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b03a2e"/></marker>
+  </defs>
+  <style>
+    .bx { fill: #fff; stroke: #1f4e79; stroke-width: 1.4; }
+    .sub { fill: #f3f6fa; stroke: #1f4e79; stroke-width: 1.2; }
+    .ext { fill: #fafafa; stroke: #888; stroke-width: 1.1; }
+    .db { fill: #eef5ee; stroke: #2e6b3a; stroke-width: 1.2; }
+    .err { fill: #fbeeee; stroke: #b03a2e; stroke-width: 1.2; }
+    .t { font-size: 11.5px; font-weight: 700; fill: #1a1a1a; }
+    .s { font-size: 9.5px; fill: #444; }
+    .l { font-size: 8.8px; fill: #333; }
+    .solid { stroke: #333; stroke-width: 1.2; fill: none; marker-end: url(#ah); }
+    .dash { stroke: #333; stroke-width: 1.2; fill: none; stroke-dasharray: 5 4; marker-end: url(#ah); }
+    .red { stroke: #b03a2e; stroke-width: 1.2; fill: none; stroke-dasharray: 5 4; marker-end: url(#ahr); }
+    .lb { fill: #fff; }
+  </style>
+
+  <!-- system boundary -->
+  <rect x="150" y="8" width="410" height="500" fill="none" stroke="#999" stroke-width="1.2" stroke-dasharray="8 5" rx="8"/>
+  <text x="160" y="24" class="s" font-style="italic">Our system: n8n (Cloud, or self-hosted with Docker) + our database. Outside: services that can fail.</text>
+
+  <!-- left: user and clock -->
+  <rect x="10" y="40" width="120" height="50" class="ext" rx="6"/>
+  <text x="70" y="61" class="t" text-anchor="middle">Person on</text>
+  <text x="70" y="76" class="t" text-anchor="middle">Telegram</text>
+  <rect x="10" y="196" width="120" height="42" class="ext" rx="6"/>
+  <text x="70" y="213" class="t" text-anchor="middle">Clock</text>
+  <text x="70" y="228" class="s" text-anchor="middle">weekdays 8:00 Paris</text>
+
+  <!-- A -->
+  <rect x="190" y="40" width="190" height="72" class="bx" rx="6"/>
+  <text x="285" y="60" class="t" text-anchor="middle">A · Telegram Commands</text>
+  <text x="285" y="77" class="s" text-anchor="middle">validate → route (Switch) → reply</text>
+  <text x="285" y="92" class="s" text-anchor="middle">/watch /report /stop /status /simulate</text>
+  <text x="285" y="105" class="s" text-anchor="middle">30-stock cap · 5 reports/day</text>
+
+  <!-- D -->
+  <rect x="410" y="40" width="135" height="72" class="sub" rx="6"/>
+  <text x="477" y="58" class="t" text-anchor="middle">D · Resolve Stock</text>
+  <text x="477" y="72" class="t" text-anchor="middle">Symbols (sub)</text>
+  <text x="477" y="88" class="s" text-anchor="middle">ticker check → search</text>
+  <text x="477" y="101" class="s" text-anchor="middle">→ AI, re-checked</text>
+
+  <!-- B -->
+  <rect x="190" y="160" width="190" height="118" class="bx" rx="6"/>
+  <text x="285" y="180" class="t" text-anchor="middle">B · Build &amp; Send Reports</text>
+  <text x="285" y="197" class="s" text-anchor="middle">pick recipients (never twice/day)</text>
+  <text x="285" y="211" class="s" text-anchor="middle">each section fails on its own</text>
+  <text x="285" y="225" class="s" text-anchor="middle">1 AI call → code fact-check</text>
+  <text x="285" y="239" class="s" text-anchor="middle">→ template if it fails</text>
+  <text x="285" y="253" class="s" text-anchor="middle">personal message per user</text>
+  <text x="285" y="267" class="s" text-anchor="middle">fail loudly if nothing delivered</text>
+
+  <!-- C -->
+  <rect x="410" y="160" width="135" height="72" class="sub" rx="6"/>
+  <text x="477" y="178" class="t" text-anchor="middle">C · Get Market</text>
+  <text x="477" y="192" class="t" text-anchor="middle">Quotes (sub)</text>
+  <text x="477" y="208" class="s" text-anchor="middle">retry ×2 → backup</text>
+  <text x="477" y="221" class="s" text-anchor="middle">circuit breaker (3 fails)</text>
+
+  <!-- data tables -->
+  <rect x="250" y="340" width="295" height="58" class="db" rx="6"/>
+  <text x="397" y="360" class="t" text-anchor="middle">Supabase PostgreSQL (state)</text>
+  <text x="397" y="376" class="s" text-anchor="middle">subscribers · watchlist · report log · price history</text>
+  <text x="397" y="390" class="s" text-anchor="middle">source health (+ /simulate switch) · error log</text>
+
+  <!-- E -->
+  <rect x="190" y="430" width="190" height="60" class="err" rx="6"/>
+  <text x="285" y="451" class="t" text-anchor="middle">E · Error Alerts</text>
+  <text x="285" y="467" class="s" text-anchor="middle">Error Trigger → alert owner</text>
+  <text x="285" y="481" class="s" text-anchor="middle">→ error log</text>
+
+  <!-- external services -->
+  <rect x="600" y="40" width="150" height="42" class="ext" rx="6"/>
+  <text x="675" y="58" class="t" text-anchor="middle">Yahoo Finance</text>
+  <text x="675" y="73" class="s" text-anchor="middle">prices + search (primary)</text>
+  <rect x="600" y="150" width="150" height="42" class="ext" rx="6"/>
+  <text x="675" y="168" class="t" text-anchor="middle">Alpha Vantage</text>
+  <text x="675" y="183" class="s" text-anchor="middle">prices (backup, 25/day)</text>
+  <rect x="600" y="222" width="150" height="42" class="ext" rx="6"/>
+  <text x="675" y="240" class="t" text-anchor="middle">Frankfurter / ER-API</text>
+  <text x="675" y="255" class="s" text-anchor="middle">USD/EUR (primary / backup)</text>
+  <rect x="600" y="284" width="150" height="42" class="ext" rx="6"/>
+  <text x="675" y="302" class="t" text-anchor="middle">RSS feeds</text>
+  <text x="675" y="317" class="s" text-anchor="middle">CNBC · BBC · Google News</text>
+  <rect x="600" y="346" width="150" height="42" class="ext" rx="6"/>
+  <text x="675" y="364" class="t" text-anchor="middle">AI model</text>
+  <text x="675" y="379" class="s" text-anchor="middle">OpenAI via n8n credits</text>
+
+  <!-- arrows: user / clock -->
+  <line x1="130" y1="56" x2="188" y2="56" class="solid"/>
+  <rect x="134" y="44" width="48" height="10" class="lb"/><text x="158" y="52" class="l" text-anchor="middle">command</text>
+  <line x1="130" y1="217" x2="188" y2="217" class="dash"/>
+  <rect x="136" y="205" width="44" height="10" class="lb"/><text x="158" y="213" class="l" text-anchor="middle">trigger</text>
+  <path d="M190,190 L100,190 L100,92" class="solid"/>
+  <rect x="102" y="140" width="40" height="22" class="lb"/><text x="122" y="149" class="l" text-anchor="middle">report</text><text x="122" y="159" class="l" text-anchor="middle">(HTML)</text>
+  <path d="M190,475 L40,475 L40,92" class="red"/>
+  <rect x="42" y="300" width="52" height="22" class="lb"/><text x="68" y="309" class="l" text-anchor="middle" fill="#b03a2e">alert to</text><text x="68" y="319" class="l" text-anchor="middle" fill="#b03a2e">owner</text>
+
+  <!-- A to D, A to B -->
+  <line x1="380" y1="76" x2="408" y2="76" class="solid"/>
+  <text x="394" y="70" class="l" text-anchor="middle">names</text>
+  <line x1="285" y1="112" x2="285" y2="158" class="dash"/>
+  <rect x="290" y="126" width="112" height="22" class="lb"/><text x="293" y="135" class="l">/report: start in background,</text><text x="293" y="145" class="l">don't wait (async)</text>
+
+  <!-- D to Yahoo, D to AI -->
+  <line x1="545" y1="60" x2="598" y2="60" class="solid"/>
+  <rect x="548" y="47" width="48" height="10" class="lb"/><text x="572" y="55" class="l" text-anchor="middle">ticker/name</text>
+  <path d="M545,100 L578,100 L578,372 L598,372" class="solid"/>
+  <rect x="580" y="112" width="18" height="46" class="lb"/><text x="589" y="121" class="l" text-anchor="middle">names</text><text x="589" y="132" class="l" text-anchor="middle">not</text><text x="589" y="143" class="l" text-anchor="middle">found</text>
+
+  <!-- B to C, C to services -->
+  <line x1="380" y1="200" x2="408" y2="200" class="solid"/>
+  <text x="394" y="192" class="l" text-anchor="middle">symbols</text>
+  <line x1="545" y1="172" x2="598" y2="72" class="solid"/>
+  <rect x="546" y="141" width="30" height="10" class="lb"/><text x="561" y="149" class="l" text-anchor="middle">prices</text>
+  <line x1="545" y1="200" x2="598" y2="176" class="solid"/>
+  <rect x="551" y="182" width="40" height="10" class="lb"/><text x="571" y="190" class="l" text-anchor="middle">backup</text>
+
+  <!-- B to FX, RSS, AI -->
+  <path d="M380,248 L598,248" class="solid"/>
+  <rect x="470" y="237" width="62" height="10" class="lb"/><text x="501" y="245" class="l" text-anchor="middle">USD/EUR rate</text>
+  <line x1="380" y1="262" x2="598" y2="303" class="solid"/>
+  <rect x="520" y="275" width="46" height="10" class="lb"/><text x="543" y="283" class="l" text-anchor="middle">headlines</text>
+  <line x1="380" y1="274" x2="598" y2="362" class="solid"/>
+  <rect x="486" y="318" width="76" height="10" class="lb"/><text x="524" y="326" class="l" text-anchor="middle">data → 1 summary</text>
+
+  <!-- tables -->
+  <path d="M190,100 L168,100 L168,322 L262,322 L262,338" class="solid"/>
+  <rect x="128" y="282" width="38" height="22" class="lb"/><text x="165" y="290" class="l" text-anchor="end">users +</text><text x="165" y="300" class="l" text-anchor="end">stocks</text>
+  <line x1="320" y1="278" x2="320" y2="338" class="solid"/>
+  <rect x="324" y="294" width="84" height="22" class="lb"/><text x="327" y="302" class="l">read: users, stocks</text><text x="327" y="312" class="l">write: log, prices</text>
+  <line x1="477" y1="232" x2="477" y2="338" class="solid"/>
+  <rect x="480" y="289" width="62" height="10" class="lb"/><text x="482" y="297" class="l">source health</text>
+
+  <!-- failures to E -->
+  <line x1="210" y1="278" x2="210" y2="428" class="red"/>
+  <rect x="213" y="406" width="150" height="10" class="lb"/><text x="216" y="414" class="l" fill="#b03a2e">A, B or C fails after retries</text>
+  <line x1="370" y1="430" x2="370" y2="400" class="solid"/>
+  <rect x="374" y="410" width="44" height="10" class="lb"/><text x="376" y="418" class="l">error row</text>
+</svg>
+</div>
+<p class="caption"><b>Figure 1:</b> MarketBrief architecture: three workflows, two sub-workflows, one Supabase PostgreSQL database. <b>Solid arrows</b>: the caller waits for the answer (synchronous). <b>Dashed arrows</b>: fire-and-forget (asynchronous): the clock and <code>/report</code> start workflow B without waiting, and failures reach E automatically. Arrows point in the direction of the request; the answer returns along the same line. Every service to the right of the dashed boundary can fail; each one has a retry and either a backup or a clearly labelled “unavailable” section.</p>
+
+</body>
+</html>
