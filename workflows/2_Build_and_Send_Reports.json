@@ -1,0 +1,1123 @@
+{
+  "id": "QXlV3T5yphTPj0Bm",
+  "versionId": "2d61e4d5-dd5f-4b3e-88be-ba745d729df6",
+  "name": "MR · Build & Send Reports",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "8b87535c-9fa4-4d29-afe7-f280212972e1",
+      "name": "Every Weekday 8:00 Paris",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "m1",
+              "name": "mode",
+              "value": "scheduled",
+              "type": "string"
+            },
+            {
+              "id": "m2",
+              "name": "chat_id",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "72b25c42-90af-4c01-a0f3-004aa5653ddf",
+      "name": "Scheduled Run Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        272
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "d3688260-8266-40a1-8336-ce8efc710c96",
+      "name": "Run Now (Test)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "mode"
+            },
+            {
+              "name": "chat_id"
+            }
+          ]
+        }
+      },
+      "id": "30fe91d5-c5f5-4bd2-9c50-3e129c6defad",
+      "name": "When Asked For A Report",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "o1",
+              "name": "mode",
+              "value": "={{ $json.mode || \"on_demand\" }}",
+              "type": "string"
+            },
+            {
+              "id": "o2",
+              "name": "chat_id",
+              "value": "={{ String($json.chat_id || \"\") }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c39fbe2a-9313-4cc7-86a7-2aeffb88918d",
+      "name": "On-Demand Run Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Who gets a report in this run, and which symbols we need to fetch (once, for everyone).\n// Scheduled runs skip anyone who already got today's scheduled report: running twice never sends twice.\nlet run;\ntry { run = $('Scheduled Run Settings').first().json; } catch (e) { run = $('On-Demand Run Settings').first().json; }\nconst today = $now.setZone('Europe/Paris').toFormat('yyyy-MM-dd');\nconst subs = $('Read Active Subscribers').all().map(i => i.json).filter(s => s.chat_id);\nconst watch = $('Read All Watchlists').all().map(i => i.json).filter(w => w.chat_id && w.symbol);\nconst log = $('Read Todays Report Log').all().map(i => i.json).filter(l => l.chat_id);\nconst alreadySent = new Set(log.filter(l => l.trigger === 'scheduled' && l.status === 'sent').map(l => String(l.chat_id)));\nconst INDICES = ['^GSPC', '^IXIC', '^DJI'];\nlet recipients = [];\nif (run.mode === 'scheduled') {\n  recipients = subs.filter(s => !alreadySent.has(String(s.chat_id)))\n    .map(s => ({ chat_id: String(s.chat_id), first_name: s.first_name || '' }));\n} else if (run.chat_id) {\n  const s = subs.find(x => String(x.chat_id) === String(run.chat_id));\n  recipients = [{ chat_id: String(run.chat_id), first_name: s ? (s.first_name || '') : '' }];\n}\nrecipients = recipients.map(r => Object.assign(r, {\n  symbols: watch.filter(w => String(w.chat_id) === r.chat_id).map(w => String(w.symbol).toUpperCase())\n}));\nconst symbols = Array.from(new Set(INDICES.concat(...recipients.map(r => r.symbols))));\nreturn [{ json: {\n  mode: run.mode, today: today, recipients: recipients, symbols: symbols,\n  skipped_already_sent: run.mode === 'scheduled' ? subs.length - recipients.length : 0,\n  has_recipients: recipients.length > 0\n} }];"
+      },
+      "id": "99c4b589-4310-4e18-a9bb-8efaf9d9175c",
+      "name": "Pick Recipients",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_recipients }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ec06b3a-0acb-4019-b728-e3bb60f56aa0",
+      "name": "Anyone To Send To?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "J5EifRnipBruzHkl"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "symbols": "={{ $json.symbols }}"
+          },
+          "schema": [
+            {
+              "id": "symbols",
+              "displayName": "symbols",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "array",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "9e673f3a-6031-4f7e-8276-c536c1060f64",
+      "name": "Get Market Quotes",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1792,
+        272
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $(\"Read Source Health\").all().some(i => i.json.source === \"fx\" && i.json.simulate_down) ? \"https://frankfurter-unavailable.invalid\" : \"https://api.frankfurter.dev\" }}/v1/{{ $now.minus(10, \"days\").toFormat(\"yyyy-MM-dd\") }}..?base=USD&symbols=EUR",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "851b4ea3-0438-4167-9506-f2fa3ea129ce",
+      "name": "Fetch FX Rates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        272
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://open.er-api.com/v6/latest/USD",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "93c0a011-8dec-4cf8-bd94-c75466bbc888",
+      "name": "Fetch FX Backup Rate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        272
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $(\"Read Source Health\").all().some(i => i.json.source === \"news\" && i.json.simulate_down) ? \"https://news-unavailable.invalid/cnbc.xml\" : \"https://www.cnbc.com/id/100003114/device/rss/rss.html\" }}",
+        "options": {}
+      },
+      "id": "e618f9af-6689-4425-9197-75b55283cfad",
+      "name": "Read CNBC Market Headlines",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        2464,
+        272
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $(\"Read Source Health\").all().some(i => i.json.source === \"news\" && i.json.simulate_down) ? \"https://news-unavailable.invalid/bbc.xml\" : \"https://feeds.bbci.co.uk/news/business/rss.xml\" }}",
+        "options": {}
+      },
+      "id": "70a3a058-dde9-4576-a467-2f12634c46ef",
+      "name": "Read BBC Business Headlines",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        2688,
+        272
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $(\"Read Source Health\").all().some(i => i.json.source === \"news\" && i.json.simulate_down) ? \"https://news-unavailable.invalid/politics.xml\" : \"https://news.google.com/rss/search?q=US+politics+economy+when:1d&hl=en-US&gl=US&ceid=US:en\" }}",
+        "options": {}
+      },
+      "id": "080c0f66-a687-4b60-ae68-9b6b7167a0df",
+      "name": "Read Political Headlines",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        2912,
+        272
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather every section in one place. Each section succeeds or fails on its own:\n// a dead source marks its section as unavailable instead of stopping the whole report.\nconst plan = $('Pick Recipients').first().json;\nconst safeAll = name => { try { return $(name).all().map(i => i.json); } catch (e) { return []; } };\nconst safeFirst = name => { try { return $(name).first().json; } catch (e) { return {}; } };\n\n// Stocks and indices (from the Get Market Quotes sub-workflow)\nconst qp = safeFirst('Get Market Quotes');\nconst quotes = Array.isArray(qp.quotes) ? qp.quotes : [];\nconst okQuotes = quotes.filter(q => q.ok);\nconst bySymbol = {};\nfor (const q of quotes) bySymbol[q.symbol] = q;\nlet stocks = 'down';\nif (okQuotes.length === quotes.length && quotes.length) stocks = 'ok';\nelse if (okQuotes.length) stocks = 'partial';\nconst usedBackup = okQuotes.some(q => q.source === 'alphavantage');\n\n// Currencies: Frankfurter (with day-over-day change), else the backup (rate only)\nlet fx = { status: 'down' };\nconst f = safeFirst('Fetch FX Rates');\nif (f && f.rates && typeof f.rates === 'object' && Object.keys(f.rates).length) {\n  const dates = Object.keys(f.rates).sort();\n  const last = f.rates[dates[dates.length - 1]].EUR;\n  const prev = dates.length > 1 ? f.rates[dates[dates.length - 2]].EUR : null;\n  fx = { status: 'ok', source: 'frankfurter', usd_eur: last, eur_usd: 1 / last,\n         change_pct: prev ? (last - prev) / prev * 100 : null, as_of: dates[dates.length - 1] };\n} else {\n  const b = safeFirst('Fetch FX Backup Rate');\n  if (b && b.result === 'success' && b.rates && b.rates.EUR) {\n    fx = { status: 'backup', source: 'exchangerate-api', usd_eur: b.rates.EUR, eur_usd: 1 / b.rates.EUR, change_pct: null };\n  }\n}\n\n// Headlines: three feeds, duplicates removed, last 36 hours, newest first\nconst feeds = [['Read CNBC Market Headlines', 'CNBC'], ['Read BBC Business Headlines', 'BBC'], ['Read Political Headlines', 'Google News']];\nconst seen = new Set();\nlet headlines = [];\nlet feedsOk = 0;\nfor (const pair of feeds) {\n  // At most 4 newest per feed, so one busy source cannot crowd out the others.\n  const rows = safeAll(pair[0]).filter(r => r.title && r.link && !r.error)\n    .sort((a, b) => new Date(b.isoDate || b.pubDate || 0) - new Date(a.isoDate || a.pubDate || 0)).slice(0, 4);\n  if (rows.length) feedsOk++;\n  for (const r of rows) {\n    const key = String(r.title).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60);\n    if (seen.has(key)) continue;\n    seen.add(key);\n    const date = new Date(r.isoDate || r.pubDate || 0);\n    let title = String(r.title).trim();\n    let source = pair[1];\n    if (pair[1] === 'Google News' && title.lastIndexOf(' - ') > 0) {\n      source = title.slice(title.lastIndexOf(' - ') + 3);\n      title = title.slice(0, title.lastIndexOf(' - '));\n    }\n    headlines.push({ title: title, link: r.link, source: source, ts: isNaN(date) ? 0 : date.getTime() });\n  }\n}\nconst cutoff = Date.now() - 36 * 3600 * 1000;\nheadlines = headlines.filter(h => h.ts === 0 || h.ts >= cutoff).sort((a, b) => b.ts - a.ts).slice(0, 12)\n  .map((h, i) => Object.assign(h, { id: i + 1 }));\nconst news = headlines.length ? (feedsOk === feeds.length ? 'ok' : 'partial') : 'down';\n\n// What the AI is allowed to see: compact, numbers already computed by code\nconst indexNames = { '^GSPC': 'S&P 500', '^IXIC': 'Nasdaq', '^DJI': 'Dow Jones' };\nconst round = (x, d) => (x === null || x === undefined || isNaN(x)) ? null : Math.round(x * Math.pow(10, d)) / Math.pow(10, d);\nconst watched = okQuotes.filter(q => !indexNames[q.symbol]);\nconst movers = watched.slice().sort((a, b) => Math.abs(b.change_pct || 0) - Math.abs(a.change_pct || 0)).slice(0, 8);\nconst aiInput = {\n  indices: Object.keys(indexNames).filter(s => bySymbol[s] && bySymbol[s].ok).map(s => ({ name: indexNames[s], change_pct: round(bySymbol[s].change_pct, 2) })),\n  followed_stocks_biggest_moves: movers.map(q => ({ symbol: q.symbol, name: q.name, change_pct: round(q.change_pct, 2) })),\n  usd_to_eur: fx.status === 'down' ? null : { rate: round(fx.usd_eur, 4), change_pct: round(fx.change_pct, 2) },\n  headlines: headlines.map(h => ({ id: h.id, title: h.title, source: h.source }))\n};\n\nconst down = [];\nif (stocks !== 'ok') down.push('stocks:' + stocks);\nif (fx.status !== 'ok') down.push('fx:' + fx.status);\nif (news !== 'ok') down.push('news:' + news);\n\nreturn [{ json: {\n  today: plan.today, mode: plan.mode, recipients: plan.recipients,\n  quotes: bySymbol, fx: fx, headlines: headlines,\n  sections: { stocks: stocks, stocks_backup_used: usedBackup, primary_state: qp.primary ? qp.primary.state : 'unknown', fx: fx.status, news: news },\n  sections_down: down.join(', '),\n  ai_input: aiInput\n} }];"
+      },
+      "id": "7922943a-83c3-4554-81fe-f646e1c64afa",
+      "name": "Assemble Market Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        272
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "1ab3227f-d0d8-4054-9ac7-05d4dfa5822a",
+      "name": "Nothing To Send (Already Sent Today)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One row per symbol per day, so the system keeps a history it can compare against later.\nconst d = $input.first().json;\nreturn Object.values(d.quotes).filter(q => q.ok).map(q => ({ json: {\n  report_date: d.today, symbol: q.symbol, price: q.price, change_pct: q.change_pct, source: q.source\n} }));"
+      },
+      "id": "e3784e2b-f8fc-408b-a2dd-8f479aec3325",
+      "name": "Prepare Price History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Read Source Health\").all().some(i => i.json.source === \"ai\" && i.json.simulate_down) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2e2a34f8-0f3a-49b1-a8f4-f0d30618b805",
+      "name": "AI Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Today's market data:\n{{ JSON.stringify($json.ai_input) }}",
+        "hasOutputParser": true,
+        "batching": {},
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write the opening lines of a daily market report read on Telegram by ordinary people.\nUse ONLY the data you are given. Rules:\n- 2 or 3 short sentences, under 60 words, neutral tone, plain English.\n- You may mention at most 3 percentages, copied from the data (rounding to 1 decimal is fine).\n- Do not write any other number: no prices, dates, years or counts.\n- Never give advice: no buy, sell, should, recommend.\n- Then choose the 4 headlines most relevant to markets and to the followed stocks, and return their ids."
+            }
+          ]
+        }
+      },
+      "id": "33f4e54c-58bf-4b72-bd17-6824709ede5d",
+      "name": "Write Market Summary",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        3584,
+        304
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low",
+          "timeout": 45000,
+          "maxRetries": 1
+        }
+      },
+      "id": "2c1141aa-adb3-4417-abf2-20ff1c2bcb40",
+      "name": "Summary Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        3600,
+        528
+      ],
+      "credentials": {
+        "openAiApi": {
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{ \"summary\": \"US stocks edged higher, with the S&P 500 up 0.4%.\", \"headline_ids\": [1, 3, 4, 7] }"
+      },
+      "id": "ac396945-b147-41d0-ab65-9385a5f2ea60",
+      "name": "Summary Format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        3728,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Never trust what a model wrote. Every number in the AI summary must exist in our data,\n// and advice words are forbidden. If anything fails, a plain template written by code is used instead.\nconst d = $('Assemble Market Data').first().json;\nconst inp = $input.first().json || {};\nlet ai = inp.output;\nif (typeof ai === 'string') { try { ai = JSON.parse(ai); } catch (e) { ai = null; } }\nlet reason = null;\nif (!ai || typeof ai !== 'object') {\n  if (inp.error) reason = 'AI call failed';\n  else reason = 'AI switched off';\n}\nconst allowed = [];\n// The AI sees values rounded to 2 decimals and may round again to 1, so accept both the exact and the 2-decimal value.\nconst addAllowed = v => { allowed.push(Math.abs(v)); allowed.push(Math.round(Math.abs(v) * 100) / 100); };\nfor (const q of Object.values(d.quotes)) if (q.ok && typeof q.change_pct === 'number') addAllowed(q.change_pct);\nif (d.fx && typeof d.fx.change_pct === 'number') addAllowed(d.fx.change_pct);\nconst numberOk = n => allowed.some(v => Math.abs(n - v) <= 0.051);\nlet summary = ai && typeof ai.summary === 'string' ? ai.summary.trim() : '';\nif (!reason) {\n  if (!summary) reason = 'AI gave an empty summary';\n  else if (summary.length > 400) reason = 'AI summary too long';\n  else if (/\\b(buy|sell|should|recommend|guarantee)/i.test(summary)) reason = 'AI gave advice';\n  else {\n    // Names can contain digits (\"S&P 500\"); remove index and company names before checking numbers.\n    let scan = summary.replace(/S&P\\s*500/gi, 'S&P');\n    for (const q of Object.values(d.quotes)) { if (q.name) scan = scan.split(q.name).join(' '); if (q.symbol) scan = scan.split(q.symbol).join(' '); }\n    const nums = (scan.match(/\\d+(?:[.,]\\d+)?/g) || []).map(x => parseFloat(x.replace(',', '.')));\n    const bad = nums.filter(n => !numberOk(n));\n    if (bad.length) reason = 'AI wrote a number not in the data: ' + bad.join(', ');\n  }\n}\nlet ids = ai && Array.isArray(ai.headline_ids) ? ai.headline_ids.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= d.headlines.length) : [];\nids = Array.from(new Set(ids)).slice(0, 4);\nif (!ids.length) ids = d.headlines.slice(0, 4).map(h => h.id);\nif (reason) {\n  const fmt = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';\n  const parts = [];\n  const idx = [['^GSPC', 'S&P 500'], ['^IXIC', 'Nasdaq']].filter(p => d.quotes[p[0]] && d.quotes[p[0]].ok);\n  if (idx.length) parts.push(idx.map(p => p[1] + ' ' + fmt(d.quotes[p[0]].change_pct)).join(', ') + '.');\n  const mv = d.ai_input.followed_stocks_biggest_moves[0];\n  if (mv && typeof mv.change_pct === 'number') parts.push('Biggest move among followed stocks: ' + mv.name + ' (' + fmt(mv.change_pct) + ').');\n  if (d.fx && d.fx.usd_eur) parts.push('1 dollar buys ' + d.fx.usd_eur.toFixed(4) + ' euros.');\n  summary = parts.join(' ') || 'Market data is limited this morning; see the sections below.';\n}\nreturn [{ json: { summary: summary, summary_by: reason ? 'template' : 'ai', check_note: reason || 'passed', headline_ids: ids } }];"
+      },
+      "id": "a132d224-c678-4688-8611-f726bcf4d0bf",
+      "name": "Fact-Check AI Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3936,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One personal message per recipient: shared market sections + their own stocks.\nconst d = $('Assemble Market Data').first().json;\nconst s = $input.first().json;\nconst esc = t => String(t === undefined || t === null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst pct = v => (typeof v !== 'number' || isNaN(v)) ? 'n/a' : (v > 0 ? '▲ +' : v < 0 ? '▼ ' : '• ') + v.toFixed(2) + '%';\nconst num = v => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\nconst nowNY = $now.setZone('America/New_York');\nconst head = $now.setZone('Europe/Paris').toFormat('ccc d LLL yyyy');\n\n// When are these prices from? Live during US trading hours, otherwise the last close.\nlet asOf = '';\nconst ref = d.quotes['^GSPC'] && d.quotes['^GSPC'].ok ? d.quotes['^GSPC'] : Object.values(d.quotes).find(q => q.ok);\nif (ref && ref.market_time) {\n  const mt = DateTime.fromISO(ref.market_time).setZone('America/New_York');\n  const minutes = nowNY.hour * 60 + nowNY.minute;\n  const open = nowNY.weekday <= 5 && minutes >= 570 && minutes < 960 && mt.hasSame(nowNY, 'day');\n  asOf = open ? 'Live prices, US market open' : 'Prices as of US close, ' + mt.toFormat('ccc d LLL');\n}\n\nconst notes = [];\nif (d.sections.stocks === 'down') notes.push('Stock prices are unavailable right now (both sources failed). The rest of your report is complete.');\nelse if (d.sections.stocks_backup_used) notes.push('Some prices came from the backup source (Alpha Vantage) because Yahoo Finance was unavailable' + (d.sections.primary_state === 'circuit_open' ? ' (skipped after repeated failures)' : '') + '.');\nif (d.fx.status === 'backup') notes.push('Exchange rate came from the backup source; day-over-day change not available.');\nif (d.fx.status === 'down') notes.push('Exchange rates are unavailable right now.');\nif (d.sections.news === 'down') notes.push('Headlines are unavailable right now.');\n\nconst lines = [];\nconst indexRows = [['^GSPC', 'S&P 500'], ['^IXIC', 'Nasdaq'], ['^DJI', 'Dow Jones']].map(p => {\n  const q = d.quotes[p[0]];\n  if (!q || !q.ok) return p[1] + ': unavailable';\n  if (q.proxy) return p[1] + ' (via ' + q.proxy + ' fund) ' + pct(q.change_pct);\n  return p[1] + '  ' + num(q.price) + '  ' + pct(q.change_pct);\n});\nconst picked = s.headline_ids.map(id => d.headlines.find(h => h.id === id)).filter(Boolean);\n\n// If the backup source was used it has no company names; fall back to the name saved with the watchlist.\nconst savedNames = {};\ntry { for (const w of $('Read All Watchlists').all()) if (w.json.symbol && w.json.name) savedNames[String(w.json.symbol).toUpperCase()] = w.json.name; } catch (e) {}\nconst nameOf = q => (q.name && q.name !== q.symbol) ? q.name : (savedNames[q.symbol] || '');\n\nreturn d.recipients.map(r => {\n  const out = [];\n  out.push('📊 <b>Market Report</b> · ' + esc(head));\n  if (asOf) out.push('<i>' + esc(asOf) + '</i>');\n  out.push('');\n  out.push('🧠 <b>In short</b> <i>(' + (s.summary_by === 'ai' ? 'AI-written, fact-checked' : 'automatic summary') + ')</i>');\n  out.push(esc(s.summary));\n  out.push('');\n  out.push('🇺🇸 <b>Indices</b>');\n  for (const row of indexRows) out.push(esc(row));\n  out.push('');\n  out.push('⭐ <b>Your stocks</b>');\n  if (!r.symbols.length) out.push('You do not follow any stocks yet. Try /watch AAPL');\n  else {\n    const mine = r.symbols.map(sym => d.quotes[sym] || { symbol: sym, ok: false });\n    const ok = mine.filter(q => q.ok).sort((a, b) => (b.change_pct || 0) - (a.change_pct || 0));\n    for (const q of ok) out.push('<b>' + esc(q.symbol) + '</b> ' + esc(nameOf(q)) + '  ' + num(q.price) + ' ' + esc(q.currency || '') + '  ' + pct(q.change_pct));\n    const missing = mine.filter(q => !q.ok).map(q => q.symbol);\n    if (missing.length) out.push('<i>No data right now for: ' + esc(missing.join(', ')) + '</i>');\n  }\n  out.push('');\n  out.push('💱 <b>Currencies</b>');\n  if (d.fx.status === 'down') out.push('Unavailable');\n  else {\n    out.push('1 USD = ' + d.fx.usd_eur.toFixed(4) + ' EUR' + (typeof d.fx.change_pct === 'number' ? '  ' + pct(d.fx.change_pct) : ''));\n    out.push('1 EUR = ' + d.fx.eur_usd.toFixed(4) + ' USD');\n  }\n  out.push('');\n  out.push('📰 <b>Headlines</b>');\n  if (!picked.length) out.push('Unavailable');\n  for (const h of picked) out.push('• <a href=\"' + esc(h.link) + '\">' + esc(h.title) + '</a> · ' + esc(h.source));\n  if (notes.length) { out.push(''); for (const n of notes) out.push('⚠️ ' + esc(n)); }\n  out.push('');\n  out.push('<i>Information only, not financial advice.</i> /help');\n  let text = out.join('\\n');\n  if (text.length > 4000) text = text.slice(0, 3990) + '…';\n  return { json: { chat_id: r.chat_id, text: text } };\n});"
+      },
+      "id": "ddb4285b-9eed-4f5f-8d4b-29e2263bcb7e",
+      "name": "Compose Reports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "4f4c1387-6b23-4d67-a52d-3ea52aeebf2d",
+      "name": "Send Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4384,
+        416
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Record what happened to every report, so tomorrow's run and /status can see it.\nconst d = $('Assemble Market Data').first().json;\nconst s = $('Fact-Check AI Summary').first().json;\nconst sent = $('Compose Reports').all();\nreturn $input.all().map((item, i) => ({ json: {\n  chat_id: sent[i] ? sent[i].json.chat_id : '',\n  report_date: d.today,\n  trigger: d.mode,\n  status: item.json.error ? 'failed' : 'sent',\n  sections_down: d.sections_down || 'none',\n  summary_by: s.summary_by + (s.summary_by === 'template' ? ' (' + s.check_note + ')' : ''),\n  sent_at: new Date().toISOString()\n} }));"
+      },
+      "id": "25732fe4-bc62-4d7e-a1b0-c59becd1cb1f",
+      "name": "Prepare Delivery Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4608,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// \"Green is not a health check\": a run that delivered nothing must fail loudly, not look successful.\nconst rows = $('Prepare Delivery Log').all().map(i => i.json);\nconst sent = rows.filter(r => r.status === 'sent').length;\nreturn [{ json: { sent: sent, failed: rows.length - sent, nothing_delivered: rows.length > 0 && sent === 0 } }];"
+      },
+      "id": "e1da793c-1f9b-4961-b649-3d7a31e35981",
+      "name": "Check Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5056,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.nothing_delivered }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2bffbef5-1025-411d-8f0e-d32ddbae0e44",
+      "name": "Nothing Delivered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5280,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=No report could be delivered ({{ $json.failed }} attempts failed)"
+      },
+      "id": "3e80dad4-cd12-47a2-91db-902245e9895a",
+      "name": "Fail Loudly",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        5504,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "09fa2b6e-c6fb-47de-96d3-85a349f71d99",
+      "name": "Run Complete",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5504,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Build & Send Reports\n1. Who gets a report (scheduled runs never send twice in a day; the database also refuses a second scheduled log row)\n2. Fetch stocks (sub-workflow), currencies, headlines: each section can fail alone\n3. ONE AI call for everyone, then a code fact-check (template fallback)\n4. Personal message per user, delivery log in Supabase Postgres, fail loudly if nothing was delivered",
+        "color": 5
+      },
+      "id": "35958a00-5cd1-483c-96b7-c286dd0feec1",
+      "name": "Sticky Note ebd43a08",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select source, consecutive_failures, last_status, last_checked, simulate_down from mr_source_health order by source",
+        "options": {}
+      },
+      "id": "099190e4-73ff-4986-8bab-450cf9b84eaf",
+      "name": "Read Source Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        448,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, first_name, active, joined_at from mr_subscribers where active = true order by joined_at",
+        "options": {}
+      },
+      "id": "6c377845-64af-4de0-b847-e6640032e185",
+      "name": "Read Active Subscribers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, symbol, name from mr_watchlist order by chat_id, symbol",
+        "options": {}
+      },
+      "id": "c45521db-b2eb-48a2-b4f4-6a6abe970d2f",
+      "name": "Read All Watchlists",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id, report_date, trigger, status from mr_report_log where report_date = $1",
+        "options": {
+          "queryReplacement": "={{ [ $now.setZone('Europe/Paris').toFormat('yyyy-MM-dd') ] }}"
+        }
+      },
+      "id": "65f0b8dd-2144-4ddb-8e69-a690c1ee1af8",
+      "name": "Read Todays Report Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1120,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_market_history (report_date, symbol, price, change_pct, source, updated_at) values ($1, $2, nullif($3::text, 'null')::double precision, nullif($4::text, 'null')::double precision, $5, now()) on conflict (report_date, symbol) do update set price = excluded.price, change_pct = excluded.change_pct, source = excluded.source, updated_at = now()",
+        "options": {
+          "queryReplacement": "={{ [ $json.report_date, $json.symbol, $json.price, $json.change_pct, $json.source ] }}"
+        }
+      },
+      "id": "05262b2f-af99-4671-9d9c-0d548f2b8022",
+      "name": "Save Price History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3648,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_report_log (chat_id, report_date, trigger, status, sections_down, summary_by, sent_at) values ($1, $2, $3, $4, $5, $6, $7::timestamptz) on conflict do nothing",
+        "options": {
+          "queryReplacement": "={{ [ $json.chat_id, $json.report_date, $json.trigger, $json.status, $json.sections_down, $json.summary_by, $json.sent_at ] }}"
+        }
+      },
+      "id": "9b7a4e2e-549e-4d85-8f17-724816e835d4",
+      "name": "Save Delivery Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4832,
+        416
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every Weekday 8:00 Paris": {
+      "main": [
+        [
+          {
+            "node": "Scheduled Run Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Now (Test)": {
+      "main": [
+        [
+          {
+            "node": "Scheduled Run Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Asked For A Report": {
+      "main": [
+        [
+          {
+            "node": "On-Demand Run Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Recipients": {
+      "main": [
+        [
+          {
+            "node": "Anyone To Send To?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anyone To Send To?": {
+      "main": [
+        [
+          {
+            "node": "Get Market Quotes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing To Send (Already Sent Today)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Market Quotes": {
+      "main": [
+        [
+          {
+            "node": "Fetch FX Rates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch FX Rates": {
+      "main": [
+        [
+          {
+            "node": "Fetch FX Backup Rate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch FX Backup Rate": {
+      "main": [
+        [
+          {
+            "node": "Read CNBC Market Headlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CNBC Market Headlines": {
+      "main": [
+        [
+          {
+            "node": "Read BBC Business Headlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BBC Business Headlines": {
+      "main": [
+        [
+          {
+            "node": "Read Political Headlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Political Headlines": {
+      "main": [
+        [
+          {
+            "node": "Assemble Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Market Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Price History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Available?": {
+      "main": [
+        [
+          {
+            "node": "Write Market Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fact-Check AI Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Market Summary": {
+      "main": [
+        [
+          {
+            "node": "Fact-Check AI Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fact-Check AI Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Market Summary",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary Format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Write Market Summary",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fact-Check AI Summary": {
+      "main": [
+        [
+          {
+            "node": "Compose Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Reports": {
+      "main": [
+        [
+          {
+            "node": "Send Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Report": {
+      "main": [
+        [
+          {
+            "node": "Prepare Delivery Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Delivery": {
+      "main": [
+        [
+          {
+            "node": "Nothing Delivered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nothing Delivered?": {
+      "main": [
+        [
+          {
+            "node": "Fail Loudly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scheduled Run Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On-Demand Run Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Source Health": {
+      "main": [
+        [
+          {
+            "node": "Read Active Subscribers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Active Subscribers": {
+      "main": [
+        [
+          {
+            "node": "Read All Watchlists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Watchlists": {
+      "main": [
+        [
+          {
+            "node": "Read Todays Report Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Todays Report Log": {
+      "main": [
+        [
+          {
+            "node": "Pick Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Price History": {
+      "main": [
+        [
+          {
+            "node": "Save Price History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Delivery Log": {
+      "main": [
+        [
+          {
+            "node": "Save Delivery Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Delivery Log": {
+      "main": [
+        [
+          {
+            "node": "Check Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "errorWorkflow": "vQABQntRyQok558s",
+    "timezone": "Europe/Paris",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
