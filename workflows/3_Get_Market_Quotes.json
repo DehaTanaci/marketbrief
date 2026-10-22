@@ -1,0 +1,447 @@
+{
+  "id": "J5EifRnipBruzHkl",
+  "versionId": "b493089e-0425-4917-818d-5544e732baac",
+  "name": "MR · Get Market Quotes",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "symbols",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "58d76311-ee25-4e1b-b8ba-05f7183ceeb7",
+      "name": "When Called By Report",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One request per unique symbol. Decides whether the primary source (Yahoo) may be used:\n// - simulate_down: the owner switched it off on purpose with /simulate (demo of failure handling)\n// - circuit_open: Yahoo failed in 3 runs in a row, so we skip it for 30 minutes and go straight to the backup\nconst health = {};\nfor (const it of $('Read Source Health').all()) health[it.json.source] = it.json;\nlet symbols = $('When Called By Report').first().json.symbols;\nif (typeof symbols === 'string') {\n  try { symbols = JSON.parse(symbols); } catch (e) { symbols = symbols.split(','); }\n}\nsymbols = Array.from(new Set((symbols || []).map(s => String(s).trim().toUpperCase()).filter(Boolean)));\nconst y = health.yahoo || {};\nconst av = health.alphavantage || {};\nlet primaryState = 'ok';\nconst lastChecked = y.last_checked ? new Date(y.last_checked).getTime() : 0;\nconst minutesSinceCheck = (Date.now() - lastChecked) / 60000;\nif (y.simulate_down) primaryState = 'simulated_down';\nelse if ((y.consecutive_failures || 0) >= 3 && minutesSinceCheck < 30) primaryState = 'circuit_open';\nconst base = primaryState === 'ok' ? 'https://query1.finance.yahoo.com' : 'https://yahoo-unavailable.invalid';\nreturn symbols.map(s => ({ json: {\n  symbol: s,\n  primary_state: primaryState,\n  backup_simulated_down: !!av.simulate_down,\n  yahoo_url: base + '/v8/finance/chart/' + encodeURIComponent(s) + '?range=5d&interval=1d'\n} }));"
+      },
+      "id": "f3c24466-4d0a-4941-ae13-57b9f31b6948",
+      "name": "Plan Quote Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.yahoo_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (MarketReportBot)"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "5abdce4f-9f6b-4026-87ee-8c7bdac7a3ad",
+      "name": "Fetch Yahoo Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Turn Yahoo's reply into one clean quote, or mark it as needing the backup source.\nconst plan = $('Plan Quote Requests').item.json;\nconst r = $json || {};\nconst res = r.chart && r.chart.result && r.chart.result[0];\nif (plan.primary_state === 'ok' && res && res.meta && typeof res.meta.regularMarketPrice === 'number') {\n  const m = res.meta;\n  let chg = m.regularMarketChangePercent;\n  if (typeof chg !== 'number') {\n    const prev = m.chartPreviousClose;\n    chg = prev ? (m.regularMarketPrice - prev) / prev * 100 : null;\n  }\n  return { json: {\n    symbol: plan.symbol, ok: true, needs_backup: false, source: 'yahoo',\n    name: m.shortName || m.longName || plan.symbol,\n    price: m.regularMarketPrice, change_pct: chg, currency: m.currency || 'USD',\n    market_time: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString() : null,\n    primary_state: plan.primary_state, backup_simulated_down: plan.backup_simulated_down\n  } };\n}\nlet reason = plan.primary_state;\nif (reason === 'ok') reason = r.error ? String(r.error.message || r.error.description || 'request failed').slice(0, 120) : 'no data';\nreturn { json: {\n  symbol: plan.symbol, ok: false, needs_backup: true, source: 'none', primary_error: reason,\n  primary_state: plan.primary_state, backup_simulated_down: plan.backup_simulated_down\n} };"
+      },
+      "id": "bf7afcda-ac5c-43f3-bda0-4ca2d0295898",
+      "name": "Read Yahoo Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needs_backup }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "eb48bce5-6bc7-4326-be5e-921236f2841f",
+      "name": "Needs Backup?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.backup_simulated_down ? \"https://alphavantage-unavailable.invalid/query\" : \"https://www.alphavantage.co/query\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "function",
+              "value": "GLOBAL_QUOTE"
+            },
+            {
+              "name": "symbol",
+              "value": "={{ ({ \"^GSPC\": \"SPY\", \"^IXIC\": \"QQQ\", \"^DJI\": \"DIA\" })[$json.symbol] || $json.symbol }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "eaf6c5b9-5f43-4872-a3a0-4ff423ca5db9",
+      "name": "Fetch Alpha Vantage Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "httpQueryAuth": {
+          "name": "Alpha Vantage"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Alpha Vantage answers HTTP 200 even when it refuses (an \"Information\" field instead of data),\n// so success is decided by the content, not the status code.\nconst y = $('Read Yahoo Reply').item.json;\nconst r = $json || {};\nconst g = r['Global Quote'];\nconst proxies = { '^GSPC': 'SPY', '^IXIC': 'QQQ', '^DJI': 'DIA' };\nif (g && g['05. price']) {\n  const chg = parseFloat(String(g['10. change percent'] || '').replace('%', ''));\n  return { json: Object.assign({}, y, {\n    ok: true, needs_backup: false, source: 'alphavantage', backup_used: true,\n    name: y.name || y.symbol,\n    price: parseFloat(g['05. price']), change_pct: isNaN(chg) ? null : chg, currency: 'USD',\n    proxy: proxies[y.symbol] || null,\n    market_time: g['07. latest trading day'] ? g['07. latest trading day'] + 'T20:00:00.000Z' : null\n  }) };\n}\nlet reason = 'no data from backup';\nconst info = String(r.Information || r.Note || '');\nif (info) reason = /per second|sparingly|burst/i.test(info) ? 'backup busy (too many requests per second)' : 'backup daily limit reached';\nelse if (r.error) reason = y.backup_simulated_down ? 'simulated_down' : 'backup unreachable';\nreturn { json: Object.assign({}, y, { ok: false, source: 'none', backup_used: true, backup_error: reason }) };"
+      },
+      "id": "2c5ef36d-8415-451c-bf7d-7082ccb81c5c",
+      "name": "Read Backup Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "667a8ea7-6b98-491d-9b3a-1f34898058c3",
+      "name": "All Quotes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1792,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One package for the caller: every quote plus how each source behaved in this run.\nconst quotes = $input.all().map(i => i.json);\nconst attempted = quotes.filter(q => q.primary_state !== 'circuit_open');\nconst backupTried = quotes.filter(q => q.backup_used);\nreturn [{ json: {\n  quotes: quotes,\n  primary: {\n    state: quotes.length ? quotes[0].primary_state : 'ok',\n    attempted: attempted.length,\n    ok: attempted.filter(q => q.source === 'yahoo').length\n  },\n  backup: { attempted: backupTried.length, ok: backupTried.filter(q => q.ok).length },\n  checked_at: new Date().toISOString()\n} }];"
+      },
+      "id": "a6d1e882-9a10-4ec7-878c-503fe5a6f91a",
+      "name": "Summarize Quotes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// A source that failed for every symbol counts one more failure in a row; any success resets the count.\n// Three failures in a row opens the circuit breaker (see Plan Quote Requests).\nconst s = $input.first().json;\nconst prev = {};\nfor (const it of $('Read Source Health').all()) prev[it.json.source] = it.json;\nconst rows = [];\nif (s.primary.attempted > 0) {\n  const failedAll = s.primary.ok === 0;\n  rows.push({\n    source: 'yahoo',\n    consecutive_failures: failedAll ? ((prev.yahoo && prev.yahoo.consecutive_failures) || 0) + 1 : 0,\n    last_status: failedAll ? 'failing' : (s.primary.ok < s.primary.attempted ? 'partial' : 'ok'),\n    last_checked: s.checked_at\n  });\n}\nif (s.backup.attempted > 0) {\n  const failedAll = s.backup.ok === 0;\n  rows.push({\n    source: 'alphavantage',\n    consecutive_failures: failedAll ? ((prev.alphavantage && prev.alphavantage.consecutive_failures) || 0) + 1 : 0,\n    last_status: failedAll ? 'failing' : 'ok',\n    last_checked: s.checked_at\n  });\n}\nreturn rows.map(r => ({ json: r }));"
+      },
+      "id": "7bcc986c-7b43-48a9-a6a3-841fc893ed9b",
+      "name": "Compute Source Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hand the quote package back to the workflow that called us.\nreturn [{ json: $('Summarize Quotes').first().json }];"
+      },
+      "id": "599741ad-deb4-4fe8-9392-bdeebeb66d23",
+      "name": "Return Quotes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        80
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "content": "## Get Market Quotes (sub-workflow)\nPrimary source: Yahoo Finance. Backup: Alpha Vantage (indices via SPY/QQQ/DIA funds).\nRetries twice, then falls back. After 3 failed runs in a row the primary is skipped for 30 min (circuit breaker).\nSource health lives in Supabase Postgres (mr_source_health); if the database is unreachable, prices are still fetched.\n/simulate can switch a source off on purpose for the demo.",
+        "color": 4
+      },
+      "id": "40624d5c-6bab-4873-9b8e-d53f22d96695",
+      "name": "Sticky Note 6d174e81",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select source, consecutive_failures, last_status, last_checked, simulate_down from mr_source_health order by source",
+        "options": {}
+      },
+      "id": "73292ff4-03f4-449b-b1c6-6b9920c040d8",
+      "name": "Read Source Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into mr_source_health (source, consecutive_failures, last_status, last_checked) values ($1, $2::int, $3, $4::timestamptz) on conflict (source) do update set consecutive_failures = excluded.consecutive_failures, last_status = excluded.last_status, last_checked = excluded.last_checked",
+        "options": {
+          "queryReplacement": "={{ [ $json.source, $json.consecutive_failures, $json.last_status, $json.last_checked ] }}"
+        }
+      },
+      "id": "867cc658-783d-4b64-99fc-3a2d02fdd42e",
+      "name": "Update Source Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2464,
+        80
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "name": "Supabase MarketBrief"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500
+    }
+  ],
+  "connections": {
+    "Plan Quote Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Yahoo Quote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Yahoo Quote": {
+      "main": [
+        [
+          {
+            "node": "Read Yahoo Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Yahoo Reply": {
+      "main": [
+        [
+          {
+            "node": "Needs Backup?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Backup?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Alpha Vantage Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "All Quotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Alpha Vantage Quote": {
+      "main": [
+        [
+          {
+            "node": "Read Backup Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Backup Reply": {
+      "main": [
+        [
+          {
+            "node": "All Quotes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "All Quotes": {
+      "main": [
+        [
+          {
+            "node": "Summarize Quotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Quotes": {
+      "main": [
+        [
+          {
+            "node": "Compute Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called By Report": {
+      "main": [
+        [
+          {
+            "node": "Read Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Source Health": {
+      "main": [
+        [
+          {
+            "node": "Plan Quote Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Source Health": {
+      "main": [
+        [
+          {
+            "node": "Update Source Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Source Health": {
+      "main": [
+        [
+          {
+            "node": "Return Quotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "errorWorkflow": "vQABQntRyQok558s",
+    "timezone": "Europe/Paris",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
